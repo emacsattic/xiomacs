@@ -126,6 +126,7 @@ operation to occur is determined by the classes of SOURCE and SINK."))
 
 (defmethod quit ((w widget))
   (message "Ungrabbing keyboard.")
+  (setf (focusing *system-panel*) nil)
   (xlib:ungrab-keyboard *display*))
 
 (defun within-extents (x y x0 y0 x1 y1)
@@ -582,7 +583,8 @@ position."))
 		  (cond 
 		    ((member :button-1 state-keys)
 		     (xlib:grab-keyboard (window panel))
-		     (click panel x y))
+		     (click panel x y)
+		     (render panel))
 		    ;; TODO dragging disabled for now
 		    ;; ((and (member :button-1 state-keys)
 		    ;; 	  (dragging-enabled panel))
@@ -795,7 +797,8 @@ position."))
     (adjoin-child (widget f) listener)))
 
 (defmethod render-widget ((f panel) (L listener))
-  (with-slots (window canvas highlight-context accent-context font focusing) f
+  (with-slots (window canvas shadowed-context highlight-context
+		      accent-context font focusing) f
     (xlib:with-state (window)
       (with-slots (position-x position-y height width 
 			      buffer point-row point-column) L
@@ -803,38 +806,34 @@ position."))
 	       (font-width (xlib:text-extents font "a"))
 	       (listener-height (+ (* 2 *listener-margin*)
 				   (* (visible-lines L) font-height))))
-	  ;;
 	  ;; update listener geometry
 	  (setf position-y (- (xlib:drawable-height window)
 			      listener-height))
 	  (setf position-x 0)
 	  (setf width (xlib:drawable-width window))
 	  (setf height listener-height)
-	  ;;
-	  ;; draw border
-	  (xlib:draw-line canvas accent-context 
-			  position-x position-y 
-			  (xlib:drawable-width window) position-y)
-	  ;;
+	  ;; ;; draw border
+	  ;; (xlib:draw-line canvas accent-context 
+	  ;; 		  position-x position-y 
+	  ;; 		  (xlib:drawable-width window) position-y)
 	  ;; draw text lines
 	  (let ((y (- (xlib:drawable-height window)
-		      *listener-margin*
-		      )))
+		      *listener-margin*)))
 	    (dotimes (i (visible-lines L))
 	      (xlib:draw-glyphs canvas accent-context 
 				*listener-margin* y
 				(nth i buffer))
 	      (decf y font-height)))
-	  ;;
 	  ;; draw cursor
-	  (when (eq focusing L)
-	    (xlib:draw-rectangle canvas highlight-context 
-				 (+ *listener-margin*
-				    (* point-column font-width))
-				 (- (xlib:drawable-height window)
-				    *listener-margin*
-				    font-height)
-				 font-width font-height t)))))))
+	  (xlib:draw-rectangle canvas (if (eq focusing L)
+					  highlight-context 
+					  shadowed-context)
+			       (+ *listener-margin*
+				  (* point-column font-width))
+			       (- (xlib:drawable-height window)
+				  *listener-margin*
+				  font-height)
+			       font-width font-height t))))))
 
 (defmethod evaluate ((L listener))
   (with-slots (buffer point-row point-column history-position) L
@@ -866,9 +865,9 @@ position."))
 
 ;; These subclasses implement an abstract dataflow interface.
 
-;; Dataflow widgets contain inlet ports and outlet ports.
-;; Ports can connect to one or more connections.
-;; Connections have a source port and a sink port. 
+;; Dataflow widgets contain inlet ports and outlet ports. Ports can
+;; connect to one or more connections. Connections have a source port
+;; and a sink port.
 
 ;;;; Connections link together two ports 
 
@@ -1119,9 +1118,9 @@ in worksheet WRK at location X Y."
 	(setf width (xlib:drawable-width window)))
       ;;
       ;; draw toolbar border
-      (xlib:draw-line canvas accent-context
-		      0 toolbar-height
-		      (xlib:drawable-width window) toolbar-height)
+      ;; (xlib:draw-line canvas accent-context
+      ;; 		      0 toolbar-height
+      ;; 		      (xlib:drawable-width window) toolbar-height)
       ;;
       ;; position and render children
       (let ((x *toolbar-margin*))
@@ -1223,7 +1222,7 @@ in worksheet WRK at location X Y."
     (message "Adding widgets.")
     (let* ((worksheet (make-instance 'worksheet))
 	   (toolbar (make-instance 'toolbar))
-	   (textbox (make-instance 'textbox)))
+	   (listener (make-instance 'listener :visible-lines 2)))
       (setf (widget panel) worksheet)
       (dotimes (i 4)
 	(let ((box (make-instance 'button
@@ -1232,7 +1231,7 @@ in worksheet WRK at location X Y."
 					      '("mount" "browse" "properties" "<< back")))))
 	  (adjoin-child toolbar box)))
       (adjoin-child worksheet toolbar)
-      (adjoin-child toolbar textbox)
+      (adjoin-child toolbar listener)
       
       (xlib:display-finish-output *display*)
       
