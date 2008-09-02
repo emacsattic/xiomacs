@@ -70,13 +70,13 @@
    (height :accessor height :initform 0 :initarg :height)
    (width :accessor width :initform 0 :initarg :width)))
 
-(defgeneric default-map-key (widget key-spec) 
+(defgeneric default-map-key (widget key keysym modifiers) 
   (:documentation "When a class keymap lookup on WIDGET fails, the
 keybinding system calls this method before checking the parent
 WIDGET's class keymap table. The default is to do nothing; return
 non-nil if you handle the KEY-SPEC."))
 
-(defmethod default-map-key ((w widget) key-spec)
+(defmethod default-map-key ((w widget) key keysym modifiers)
   nil)
 
 (defgeneric touch (widget x y)
@@ -161,73 +161,41 @@ subcomponents should override this method."))
 
 ;; A keypress is a triple of the form (key keysym modifiers).  
 ;;
-;; A keymap is a hash table mapping normalized keypresses (see
-;; `normalize-key') to functions accepting a single widget argument.
-;; The function `map-key' looks in a widget's class keymap (and then
-;; the keymaps of its parent widgets) in order to find a suitable
-;; handler function. See also `define-key'.
+;; A keymap is a list of functions to be called in order with the
+;; keypress as an argument, until one returns a method to be invoked
+;; on the object in question. If no method is obtained, the process
+;; repeats with the widget's parent.
 
 (defvar *class->keymap* nil "Hash table mapping class names to keymaps.")
 
 (defun initialize-keymap-table ()
-  (setf *class->keymap* (make-hash-table)))
-
-(defun class-keymap (class-name)
-  (gethash class-name *class->keymap*))
-
-(defun set-class-keymap (class-name keymap)
-  (setf (gethash class-name *class->keymap*) keymap))
-
-(defsetf class-keymap set-class-keymap)
-
-(defun normalize-key (key-spec)
-  (destructuring-bind (key keysym modifiers) key-spec
-    (list key keysym (sort (remove-duplicates modifiers)
-			   #'string<
-			   :key #'symbol-name))))
-
-(defun make-class-keymap ()
-  (make-hash-table :test 'equal))
-    
-(defun class-key-binding (class-name key-spec)
-  ;; create if necessary
-  (when (null (class-keymap class-name))
-    (setf (class-keymap class-name)
-	  (make-class-keymap)))
-  ;; look up the binding
-  (gethash (normalize-key key-spec)
-	   (class-keymap class-name)))
-  
-(defun set-class-key-binding (class-name key-spec func) 
-  ;; create if necessary
-  (when (null (class-keymap class-name))
-    (setf (class-keymap class-name)
-	  (make-class-keymap)))
-  ;; change the binding
-  (message "BEFORE ~A" (list class-name key-spec func))
-  (prog1 (setf (gethash (normalize-key key-spec)
-			(class-keymap class-name))
-	       func)
-    (message "AFTER ~A" (gethash (normalize-key key-spec) (class-keymap class-name)))))
-    
-(defsetf class-key-binding set-class-key-binding)
-
-;; Main user functions for defining and looking up key bindings.
+  (setf *class->keymap* (make-hash-table :test 'equal)))
 
 (defun define-key (class-name key-spec func)
-  ;; strip keywords
   (destructuring-bind (&key key keysym modifiers) key-spec
-    (setf (class-key-binding class-name (list key keysym modifiers)) func)))
+    (let ((preds nil))
+      (when key 
+	(push `(eql key ,key) preds))
+      (when keysym 
+	(push `(eql keysym ,keysym) preds))
+      (when modifiers
+	(push `(subsetp ',modifiers modifiers) preds))
+      (let ((tester (eval `(lambda (key keysym modifiers)
+			     (when (and ,@preds)
+			       ,func)))))
+	(push tester (gethash class-name *class->keymap*))))))
 
-(defun map-key (widget key-spec)
-  (message "MAPPING KEY-SPEC ~A --> ~A" key-spec (normalize-key key-spec))
-  (let ((binding (class-key-binding (class-name (class-of widget))
-				    key-spec)))
-    (if (functionp binding)
-	(funcall binding widget)
-	(when (and (null (default-map-key widget key-spec))
-		   (parent widget))
-	  (map-key (parent widget) key-spec)))))
+(defun map-key (w key keysym modifiers)
+  (let* ((keymap (gethash (class-name (class-of w))
+			  *class->keymap*))
+	 (method (some (lambda (f)
+			 (funcall f key keysym modifiers))
+		       keymap)))
+    (if method
+	(funcall method w)
+	(when (not (default-map-key w key keysym modifiers))
+	  (when (parent w)
+	    (map-key (parent w) key keysym modifiers))))))
 
 ;;; Panels: X windows full of STUN widgets
 
@@ -634,7 +602,7 @@ position."))
 							0)))
 		 (key (xlib:keysym->character *display* keysym)))
 	    (when widget
-	      (map-key widget (list key keysym state-keys))
+	      (map-key widget key keysym state-keys)
 	      (render panel)))
 	  nil)
 	 ;;
@@ -711,12 +679,12 @@ position."))
 	    (xlib:draw-rectangle canvas highlight-context 
 				 x y cursor-width font-height t)))))))
 
-(defmethod default-map-key ((box textbox) key-spec)
-  (destructuring-bind (key keysym modifiers) key-spec
-    (when (typep key 'standard-char)
-      (insert-key box key))
-    ;; return true to notify keymapper that we've handled the event
-    t))
+(defmethod default-map-key ((box textbox) key keysym modifiers)
+  (declare (ignore keysym modifiers))
+  (when (typep key 'standard-char)
+    (insert-key box key))
+  ;; return true to notify keymapper that we've handled the event
+  t)
 
 (defmethod forward-char ((box textbox))
   (with-slots (buffer point-row point-column) box
