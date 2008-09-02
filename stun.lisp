@@ -121,6 +121,13 @@ operation to occur is determined by the classes of SOURCE and SINK."))
   (setf (position-x w) x)
   (setf (position-y w) y))
 
+(defgeneric quit (widget)
+  (:documentation "Exit any server grabs the widget may have initiated."))
+
+(defmethod quit ((w widget))
+  (message "Ungrabbing keyboard.")
+  (xlib:ungrab-keyboard *display*))
+
 (defun within-extents (x y x0 y0 x1 y1)
   (and (>= x x0) 
        (<= x x1)
@@ -197,22 +204,26 @@ subcomponents should override this method."))
     (setf (class-keymap class-name)
 	  (make-class-keymap)))
   ;; change the binding
-  (setf (gethash (normalize-key key-spec)
-		 (class-keymap class-name))
-	func))
+  (message "BEFORE ~A" (list class-name key-spec func))
+  (prog1 (setf (gethash (normalize-key key-spec)
+			(class-keymap class-name))
+	       func)
+    (message "AFTER ~A" (gethash (normalize-key key-spec) (class-keymap class-name)))))
     
 (defsetf class-key-binding set-class-key-binding)
 
 ;; Main user functions for defining and looking up key bindings.
 
 (defun define-key (class-name key-spec func)
+  ;; strip keywords
   (destructuring-bind (&key key keysym modifiers) key-spec
     (setf (class-key-binding class-name (list key keysym modifiers)) func)))
 
 (defun map-key (widget key-spec)
+  (message "MAPPING KEY-SPEC ~A --> ~A" key-spec (normalize-key key-spec))
   (let ((binding (class-key-binding (class-name (class-of widget))
 				    key-spec)))
-    (if binding
+    (if (functionp binding)
 	(funcall binding widget)
 	(when (and (null (default-map-key widget key-spec))
 		   (parent widget))
@@ -248,6 +259,8 @@ subcomponents should override this method."))
 
 (defvar *window->panel* "Hash table mapping X window ID's to panel objects.")
 
+(defvar *system-panel* nil "The standard panel at the bottom of the screen.")
+
 (defun find-panel (window)
   (gethash window *window->panel*))
 
@@ -257,6 +270,8 @@ subcomponents should override this method."))
    (location :accessor location :initform :bottom :initarg :location)
    ;; the widget being dragged, if any
    (dragging :accessor dragging :initform nil)
+   ;; whether dragging is enabled on this panel
+   (dragging-enabled :accessor dragging-enabled :initform nil :initarg :dragging-enabled)
    ;; the widget being joined to another, if any
    (joining :accessor joining :initform nil)
    ;; the widget having keyboard focus, if any
@@ -366,7 +381,6 @@ subcomponents should override this method."))
 		  :bit-gravity :center
 		  :depth (xlib:drawable-depth (xlib:screen-root screen))
 		  :class :input-output
-;		  :override-redirect :on
 		  :event-mask '(:exposure :button-press :key-press
 				:button-release :pointer-motion)))
     (message "Changing window type.")
@@ -462,25 +476,22 @@ appearances should override this method."))
 associated window."))
 
 (defmethod render ((f panel))
-  (format t "Rendering panel...")
+  (message "Rendering panel...")
   (fresh-line)
   (with-slots (canvas widget context clear-context window) f
-    (format t "Clearing background.")
-    (fresh-line)
+    (message "Clearing background.")
     ;; clear background
     (xlib:draw-rectangle canvas clear-context 0 0 
 			 (xlib:drawable-width window)
 			 (xlib:drawable-height window)
 			 :fill)
-    (format t "Rendering widgets.")
-    (fresh-line)
+    (message "Rendering widgets.")
     ;; render widgets 
     (dolist (child (children (widget f)))
-      (format t " * ")
+      (message "...")
       (render-widget f child))
-    (fresh-line)
-    (format t "Copying to screen.")
     ;; copy back buffer to window
+    (message "Copying to screen.")
     (xlib:copy-area canvas context 0 0 
 		    (xlib:drawable-width window)
 		    (xlib:drawable-height window)
@@ -563,6 +574,7 @@ position."))
 ;;; The X event loop
 
 (defun run-panels ()
+  ;; TODO document this
   (unwind-protect 
        (xlib:event-case (*display* :discard-p t :force-output-p t)
 	 (exposure
@@ -581,7 +593,8 @@ position."))
 	      (multiple-value-bind (x y)
 		  (xlib:pointer-position window)
 		(cond 
-		  ((member :button-1 state-keys)
+		  ((and (member :button-1 state-keys) 
+			(dragging-enabled panel))
 		   (stop-dragging panel)
 		   (render panel))
 		  ((member :button-3 state-keys)
@@ -599,10 +612,13 @@ position."))
 		(multiple-value-bind (x y)
 		    (xlib:pointer-position window)
 		  (cond 
-		    ((subsetp '(:shift :button-1) state-keys)
-		     (click panel x y))
 		    ((member :button-1 state-keys)
-		     (start-dragging panel x y))
+		     (xlib:grab-keyboard (window panel))
+		     (click panel x y))
+		    ;; TODO dragging disabled for now
+		    ;; ((and (member :button-1 state-keys)
+		    ;; 	  (dragging-enabled panel))
+		    ;;    (start-dragging panel x y))
 		    ((member :button-3 state-keys)
 		     (start-joining panel x y)))))))
 	  nil)
@@ -618,7 +634,7 @@ position."))
 							0)))
 		 (key (xlib:keysym->character *display* keysym)))
 	    (when widget
-	      (map-key widget key keysym state-keys)
+	      (map-key widget (list key keysym state-keys))
 	      (render panel)))
 	  nil)
 	 ;;
@@ -652,7 +668,7 @@ position."))
 
 ;;; Textboxes
                                            
-(defvar *textbox-margin* 4 "Default onscreen margin of a textbox.")
+(defvar *textbox-margin* 2 "Default onscreen margin of a textbox.")
 
 (defclass textbox (widget) 
   ((buffer :accessor buffer :initform nil :initarg :buffer)
@@ -793,105 +809,18 @@ position."))
 			       remainder)))
 	  (incf point-column)))))
 
-;;; Buttons
-
-;; A button evaluates the lisp expression inside when you click on it.
-
-(defclass button (textbox) ())
-
-(defmethod render-widget ((f panel) (b button))
-  (with-slots (context canvas font) f
-    (X-default-render-widget b canvas context font)))
-
-(defmethod touch ((b button) x y)
-  (with-slots (label) b
-    (handler-case
-	(eval (read-from-string label))
-      ;; print any errors to standard output for now
-      (condition (c) (format t "~S" c)))))
-
-;;; Templates
-
-;; A template allows you to create new objects within a worksheet.
-
-(defclass template (widget) ())
-
-(defmethod render-widget ((f panel) (tmp template))
-  (with-slots (shadowed-context canvas font) f
-    (X-default-render-widget tmp canvas shadowed-context font)))
-
-(defmethod cursor-key ((tem template))
-  :join-cursor)
-
-;;; Worksheets
-
-;; Worksheets are used to organize widgets into a page.
-
-(defclass worksheet (widget) ())
-
-(defmethod join-widgets ((tmp template) (wrk worksheet) &optional x y)
-  "Create a new widget of the class indicated by template TMP
-in worksheet WRK at location X Y."
-  (let* ((class-symbol (intern (string-upcase (label tmp))))
-	 (widget (make-instance class-symbol 
-				:label (concatenate 'string
-						    "*new " 
-						    (label tmp)
-						    "*")
-				:position-x x
-				:position-y y
-				:parent wrk)))
-    (adjoin-child wrk widget)))
-
-;;; Toolbars
-
-;; A toolbar full of widgets is displayed across the top of the panel.
-
-(defclass toolbar (widget) ())
-
-(defparameter *toolbar-margin* 2)
-
-(defmethod render-widget ((f panel) (b toolbar))
-  (format t "Rendering widgets...")
-  (with-slots (window canvas accent-context font) f
-    (let ((toolbar-height (+ 4
-			     (* 2 *toolbar-margin*) 
-			     (* 2 *widget-vertical-margin*)
-			     (xlib:font-ascent font)
-			     (xlib:font-descent font))))
-      ;; update toolbar geometry 
-      (with-slots (position-x position-y height width) b
-	(setf position-x 0)
-	(setf position-y 0)
-	(setf height toolbar-height)
-	(setf width (xlib:drawable-width window)))
-      ;;
-      ;; draw toolbar border
-      (xlib:draw-line canvas accent-context
-		      0 toolbar-height
-		      (xlib:drawable-width window) toolbar-height)
-      ;;
-      ;; position and render children
-      (let ((x *toolbar-margin*))
-	(dolist (child (children b))
-	  (setf (position-x child) x)
-	  (setf (position-y child) *toolbar-margin*)
-	  (render-widget f child)
-	  (incf x (+ *toolbar-margin* (width child))))))))
-
-(defmethod hit-test ((b toolbar) x y)
-  (hit-widgets (children b) x y))
-
 ;;; Lisp Listener
 
-;; A listener gives you the read-eval-print loop at the bottom of the panel.
+;; A listener gives you the read-eval-print loop at the bottom of the
+;; panel. Subclasses can override the `evaluate' method to implement
+;; different command syntaxes.
 
-(defparameter *listener-lines* 5 "Number of lines to display in listener.")
-(defparameter *listener-margin* 5 "Size of margins in listener.") 
+(defparameter *listener-margin* 2 "Size of margins in listener.") 
 
 (defclass listener (textbox)
   ((history-position :accessor history-position :initform 0 
-		     :initarg :history-position)))
+		     :initarg :history-position)
+   (visible-lines :accessor visible-lines :initform 5 :initarg :visible-lines)))
 
 (defmethod add-listener ((f panel))
   (let ((listener (make-instance 'listener)))
@@ -902,11 +831,10 @@ in worksheet WRK at location X Y."
     (xlib:with-state (window)
       (with-slots (position-x position-y height width 
 			      buffer point-row point-column) L
-	(let* ((font-height (+ 2 (xlib:font-ascent font) (xlib:font-descent font)))
+	(let* ((font-height (+ (xlib:font-ascent font) (xlib:font-descent font)))
 	       (font-width (xlib:text-extents font "a"))
-	       (listener-height (+ 4 
-				   (* 2 *listener-margin*)
-				   (* *listener-lines* font-height))))
+	       (listener-height (+ (* 2 *listener-margin*)
+				   (* (visible-lines L) font-height))))
 	  ;;
 	  ;; update listener geometry
 	  (setf position-y (- (xlib:drawable-height window)
@@ -924,7 +852,7 @@ in worksheet WRK at location X Y."
 	  (let ((y (- (xlib:drawable-height window)
 		      *listener-margin*
 		      )))
-	    (dotimes (i *listener-lines*)
+	    (dotimes (i (visible-lines L))
 	      (xlib:draw-glyphs canvas accent-context 
 				*listener-margin* y
 				(nth i buffer))
@@ -1149,6 +1077,95 @@ hit-testing succeeds, nil otherwise."
 (defmethod cursor-key ((d dataflow))
   :touch-cursor)
 
+
+;;; Buttons
+
+;; A button evaluates the lisp expression inside when you click on it.
+
+(defclass button (textbox) ())
+
+(defmethod render-widget ((f panel) (b button))
+  (with-slots (context canvas font) f
+    (X-default-render-widget b canvas context font)))
+
+(defmethod touch ((b button) x y)
+  (with-slots (label) b
+    (handler-case
+	(eval (read-from-string label))
+      ;; print any errors to standard output for now
+      (condition (c) (format t "~S" c)))))
+
+;;; Templates
+
+;; A template allows you to create new objects within a worksheet.
+
+(defclass template (widget) ())
+
+(defmethod render-widget ((f panel) (tmp template))
+  (with-slots (shadowed-context canvas font) f
+    (X-default-render-widget tmp canvas shadowed-context font)))
+
+(defmethod cursor-key ((tem template))
+  :join-cursor)
+
+;;; Worksheets
+
+;; Worksheets are used to organize widgets into a page.
+
+(defclass worksheet (widget) ())
+
+(defmethod join-widgets ((tmp template) (wrk worksheet) &optional x y)
+  "Create a new widget of the class indicated by template TMP
+in worksheet WRK at location X Y."
+  (let* ((class-symbol (intern (string-upcase (label tmp))))
+	 (widget (make-instance class-symbol 
+				:label (concatenate 'string
+						    "*new " 
+						    (label tmp)
+						    "*")
+				:position-x x
+				:position-y y
+				:parent wrk)))
+    (adjoin-child wrk widget)))
+
+;;; Toolbars
+
+;; A toolbar full of widgets is displayed across the top of the panel.
+
+(defclass toolbar (widget) ())
+
+(defparameter *toolbar-margin* 2)
+
+(defmethod render-widget ((f panel) (b toolbar))
+  (with-slots (window canvas accent-context font) f
+    (let ((toolbar-height (+ 4
+			     (* 2 *toolbar-margin*) 
+			     (* 2 *widget-vertical-margin*)
+			     (xlib:font-ascent font)
+			     (xlib:font-descent font))))
+      ;; update toolbar geometry 
+      (with-slots (position-x position-y height width) b
+	(setf position-x 0)
+	(setf position-y 0)
+	(setf height toolbar-height)
+	(setf width (xlib:drawable-width window)))
+      ;;
+      ;; draw toolbar border
+      (xlib:draw-line canvas accent-context
+		      0 toolbar-height
+		      (xlib:drawable-width window) toolbar-height)
+      ;;
+      ;; position and render children
+      (let ((x *toolbar-margin*))
+	(dolist (child (children b))
+	  (setf (position-x child) x)
+	  (setf (position-y child) *toolbar-margin*)
+	  (render-widget f child)
+	  (incf x (+ *toolbar-margin* (width child))))))))
+
+(defmethod hit-test ((b toolbar) x y)
+  (hit-widgets (children b) x y))
+
 ;;;; Initializing STUN
 
 (defun initialize-stun ()
@@ -1156,7 +1173,6 @@ hit-testing succeeds, nil otherwise."
   (initialize-display)
   (initialize-keymap-table)
   (setf *window->panel* (make-hash-table :test #'equal))
-  (setf *class->keymap* (make-hash-table :test #'equal))
   ;;
   ;; define initial keymaps
   (define-key 'textbox '(:modifiers (:control) :key #\f) #'forward-char)
@@ -1171,6 +1187,8 @@ hit-testing succeeds, nil otherwise."
   (define-key 'textbox '(:modifiers (:control) :key #\a) #'move-beginning-of-line)
   (define-key 'textbox '(:key #\Return) #'newline)
   (define-key 'textbox '(:key #\Backspace) #'backward-delete-char)
+  (define-key 'textbox '(:key #\Escape) #'quit)
+  (define-key 'textbox '(:modifiers (:control) :key #\g) #'quit)
   ;;
   (define-key 'dataflow '(:modifiers (:control) :key #\f) #'forward-char)
   (define-key 'dataflow '(:modifiers (:control) :key #\b) #'backward-char)
@@ -1184,7 +1202,9 @@ hit-testing succeeds, nil otherwise."
   (define-key 'dataflow '(:modifiers (:control) :key #\a) #'move-beginning-of-line)
   (define-key 'dataflow '(:key #\Return) #'newline)
   (define-key 'dataflow '(:key #\Backspace) #'backward-delete-char)
-  ;;
+  (define-key 'dataflow '(:key #\Escape) #'quit)
+  (define-key 'dataflow '(:modifiers (:control) :key #\g) #'quit)
+ ;;
   (define-key 'listener '(:modifiers (:control) :key #\f) #'forward-char)
   (define-key 'listener '(:modifiers (:control) :key #\b) #'backward-char)
   (define-key 'listener '(:modifiers (:control) :key #\n) #'next-history)
@@ -1196,7 +1216,10 @@ hit-testing succeeds, nil otherwise."
   (define-key 'listener '(:modifiers (:control) :key #\e) #'move-end-of-line)
   (define-key 'listener '(:modifiers (:control) :key #\a) #'move-beginning-of-line)
   (define-key 'listener '(:key #\Return) #'evaluate)
-  (define-key 'listener '(:key #\Backspace) #'backward-delete-char))
+  (define-key 'listener '(:key #\Backspace) #'backward-delete-char)
+  (define-key 'listener '(:key #\Escape) #'quit)
+  (define-key 'listener '(:modifiers (:control) :key #\g) #'quit))
+
 
 (defparameter *user-init-file-name* ".stunrc")
 
@@ -1206,11 +1229,21 @@ hit-testing succeeds, nil otherwise."
   (load (merge-pathnames (make-pathname :name *user-init-file-name*)
 			 (user-homedir-pathname))))
 
+
+;; (maphash #'(lambda (k v)
+;; 	     (message "~A" (list k v)))
+;; 	 (gethash 'listener *class->keymap*))
+
+;; (gethash '(#\f nil (:control)) 
+;; 	 (gethash 'listener *class->keymap*))
+
 (defun stun ()
   (setf *display* nil)
   (initialize-stun)
   (load-user-init-file)
   (let ((panel (make-instance 'panel)))
+
+    (setf *system-panel* panel)
 
     (message "Created panel window.")
     (xlib:display-finish-output *display*)
@@ -1231,7 +1264,7 @@ hit-testing succeeds, nil otherwise."
 					      '("mount" "browse" "properties" "<< back")))))
 	  (adjoin-child toolbar box)))
       (adjoin-child worksheet toolbar)
-      (adjoin-child worksheet textbox)
+      (adjoin-child toolbar textbox)
       
       (xlib:display-finish-output *display*)
       
