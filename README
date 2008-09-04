@@ -19,7 +19,7 @@ CREDITS     People I would like to thank.
 INSTALL     Installation instructions.
 
 stun.asd    ASDF system definition
-stun.lisp   STUN desktop manager and widget toolit
+stun.lisp   STUN desktop manager and widget toolkit
 stun.el     Emacs client support for STUN desktop manager
 
 radio.el    Code tagging and navigation tool.
