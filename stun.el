@@ -49,14 +49,15 @@
 	  ;; yes, handle it.
 	  (let ((message (subseq partial-message (1- pos))))
 	    (insert (format "%s -- %s\n" (current-time-string) string))
-	    (funcall *stun-message-string-handler-function message)
+	    (funcall *stun-message-string-handler-function* message)
 	    ;; any more input? 
 	    (setf *stun-partial-message-string*
 		  (if (> (length partial-message) (1+ pos))
 		      (subseq partial-message (1+ pos))
 		      "")))
 	  ;; not a complete command. just buffer it.
-	  (setf *stun-partial-message-string* partial-message)))))
+	  (setf *stun-partial-message-string*
+		(concat *stun-partial-message-string* partial-message))))))
 	     
 (defun stun-start ()
   (setf *stun-output-buffer* (get-buffer-create "*stun-output*"))
