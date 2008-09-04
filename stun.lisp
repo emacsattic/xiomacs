@@ -28,6 +28,11 @@
 ;; processes. Unlike most shells, STUN is also an alternative
 ;; graphical workspace toolkit for Common Lisp.
 
+;; STUN is designed to run as a subprocess of its client. The client
+;; sends commands (printed lisp data) to STUN via X11 property change
+;; messages. Responses and other events are printed to STUN's
+;; *standard-output* stream.
+
 ;;; Code:
 
 (eval-when (:compile-toplevel :load-toplevel :execute) 
@@ -41,16 +46,14 @@
 
 (in-package :stun)			 
 
-(defvar *display* nil)
-
-(defun initialize-display (&optional force)
-  (when (or force (null *display*))
-    (setf *display* (xlib:open-default-display))))
-
 (defun message (control-string &rest args)
   "Print a message to the standard error."
   (apply #'format *error-output* control-string args)
   (fresh-line))
+
+;;; User initialization file
+
+;; :. initialization >
 
 (defparameter *user-init-file-name* ".stunrc")
 
@@ -59,6 +62,170 @@
 (defun load-user-init-file ()
   (load (merge-pathnames (make-pathname :name *user-init-file-name*)
 			 (user-homedir-pathname))))
+
+;;; Addresses
+
+;; :. addresses >
+
+;; Addresses are strings of the form "/foo/bar/baz" that identify
+;; resources and actions in a STUN communications session.
+
+;; The address space is hierarchical like a unix filesystem, and the
+;; components of an address are separated by `*address-delimiter*',
+;; which is forward-slash by default. As with OSC we use the term
+;; "container" for the internal nodes (i.e. directories) and "method"
+;; for the leaves. 
+
+;; Some standard addresses: 
+;;    /system-panel
+;;    /system-panel/add-widget
+;;    /notifications/urgent 
+;;    /notifications/fyi
+;;    /audio/default-device/volume
+
+(deftype address () '(satisfies stringp))
+
+(defparameter *address-delimiter* #\/)
+
+(defun address-number-of-components (address)
+  (count *message-address-delimiter* address))
+
+(defun find-address-delimiter (address &key (start 0))
+  (position *address-delimiter* address :start start))
+
+(defun address-head (address)
+  (subseq address 0 (find-address-delimiter address)))
+
+(defun address-remainder (address)
+  (subseq address (1+ (find-address-delimiter address))))
+
+(defun address-method (address)
+  (let ((method (subseq address 
+			;; find the slash and skip it
+			(1+ (position *address-delimiter* 
+				      address 
+				      :from-end t)))))
+    (if (string= "" method)
+	;; with a trailing slash, rewrite as a
+	;; directory listing request
+	"directory"
+	method)))
+
+(defun address-relative-p (address)
+  (not (string= "" (address-head address))))
+
+(defun nth-address-component (n address)
+  (assert (>= n 0))
+  (let ((cursor 0))
+    ;; seek to nth delimiter
+    (block seeking
+      (dotimes (i n)
+	(setf cursor (find-address-delimiter address
+					     :start cursor))
+	(if (null cursor)
+	  (return-from seeking)
+	  (incf cursor))))
+    ;; extract string
+    (subseq address cursor (find-address-delimiter address
+						   :start cursor))))
+
+;;; Messages
+
+;; :. messages >
+
+;; A message is a cons of (ADDRESS . ARGUMENT-DATA).
+
+;; The method-component of the address (i.e. the "add" in
+;; "/notifications/add") is used to select a CLOS method on the
+;; receiver. The argument-data are passed when the method is invoked
+;; on the receiver. See also :. containers > , which process messages.
+
+;; Message string examples:
+
+;; /audio/default-device/increase-volume 1
+;; /audio/jackd/kill
+;; /system-panel/move :top
+  
+(defun message-p (m)
+  (and (consp m)
+       (stringp (car m))))
+
+(deftype message () '(satisfies message-p))
+
+(defun make-message (address &rest arguments)
+  (cons address arguments))
+
+(defun message-address (m)
+  (car m))
+
+(defun message-arguments (m)
+  (cdr m))
+
+(defun read-message-from-string (string)
+  (read-from-string (concatenate 'string
+				 "(" string ")")))
+
+(defun print-message (message &optional (stream *standard-output*))
+  (format stream "~A " (message-address message))
+  (dolist (arg (message-arguments message))
+    (format stream "~S " arg)))
+
+(defun print-message-to-string (message)
+  (with-output-to-string (stream)
+    (print-message message stream)))
+
+(defun client-message (address &rest args)
+  (print-message (cons address args)))
+
+;;; From addresses to actions: the container tree
+
+;; :. containers > 
+
+(defparameter *standard-public-methods* '(directory documentation))
+
+(defclass container () 
+  ;; a hash table mapping string object names to the objects themselves.
+  ((contents :accessor contents :initform nil)
+  ;; a list of method names (symbols). these are added to the contents directory.
+   (public-methods :initform *standard-public-methods* :initarg :public-methods :accessor public-methods)))
+
+(defmethod add-entry ((c container) name entry)
+  (setf (gethash (string-upcase name) (contents c))
+	entry))
+
+(defmethod delete-entry ((c container) name)
+  (remhash (string-upcase name) (contents c)))
+
+(defmethod get-entry ((c container) name)
+  (gethash (string-upcase name) (contents c)))
+
+(defmethod initialize-instance :after ((c container) &rest initargs)
+  (with-slots (contents public-methods) c
+    ;; set up hash table for strings
+    (setf contents (make-hash-table :test 'equal))
+    ;; add methods to the directory
+    (dolist (method public-methods)
+      (add-entry c (symbol-name method) method))))
+
+(defmethod process-message ((c container) message)
+  (assert (address-relative-p (message-address message)))
+  (with-slots (contents public-methods) c
+    (let* ((address (message-address message))
+	   (key (address-head address))
+	   (entry (get-entry c key))
+	   (args (message-arguments message)))
+      (etypecase entry
+	;; it's a symbol naming one of the container's methods. invoke it
+	(symbol (apply (symbol-function entry) c args))
+	;; it's another container; forward it the rest of the address and the arguments.
+	(container (process-message entry (apply #'make-message 
+						 (address-remainder address)
+						 args)))))))
+
+(defvar *root-container* nil)
+
+(defun initialize-root-container ()
+  (setf *root-container* (make-instance 'container :public-methods *standard-public-methods*)))
 
 ;;; Keymaps: binding keypresses to CLOS methods
 
@@ -134,86 +301,13 @@
 			       :background 
 			       (xlib:make-color :red 0.0 :green 0.0 :blue 0.0)))))
 
-;;; Addressing
+;;; The X11 display
 
-;; Addresses are strings of the form "/foo/bar/baz" that identify
-;; resources and actions in a STUN communications session.
+(defvar *display* nil)
 
-;; The address space is hierarchical like a unix filesystem, and the
-;; components of an address are separated by `*address-delimiter*',
-;; which is forward-slash by default. As with OSC we use the term
-;; "container" for the internal nodes (i.e. directories) and "method"
-;; for the leaves. 
-
-(defparameter *address-delimiter* #\/)
-
-(defun address-number-of-components (address)
-  (count *message-address-delimiter* address))
-
-(defun find-address-delimiter (address &key start)
-  (position *address-delimiter* address :start start))
-
-(defun address-head (address)
-  (subseq address 0 (find-address-delimiter address)))
-
-(defun address-remainder (address)
-  (subseq address (1+ (find-address-delimiter address))))
-
-(defun address-relative-p (address)
-  (not (string= "" (address-head address))))
-
-(defun nth-address-component (n address)
-  (assert (>= n 0))
-  (let ((cursor 0))
-    ;; seek to nth delimiter
-    (block seeking
-      (dotimes (i n)
-	(setf cursor (find-address-delimiter address
-					     :start cursor))
-	(if (null cursor)
-	  (return-from seeking)
-	  (incf cursor))))
-    ;; extract string
-    (subseq address cursor (find-address-delimiter address
-						   :start cursor))))
-
-;;; Messages
-
-;; A message is a cons of (ADDRESS . ARGUMENT-DATA) where ADDRESS is a
-;; string of the form "/foo/bar/baz" and ARGUMENT-DATA can be
-;; anything (including nil).
-
-;; Sending: *standard-output* so that emacs can wake up and read it
-;; Receiving: :property-change event mask
-  
-(defun message-p (m)
-  (and (consp m)
-       (stringp (car m))))
-
-(deftype message () '(satisfies message-p))
-
-(defun message-address (m)
-  (car m))
-
-(defun message-arguments (m)
-  (cdr m))
-
-(defun read-message-from-string (string)
-  (read-from-string (concatenate 'string
-				 "(" string ")")))
-
-;; Containers are just CLOS interpreter objects and nodes are methods.
-
-;; TODO container class
-
-(defvar *root-container* nil)
-
-;; (defun initialize-root-container ()
-
-;; TODO (defun container-lookup (container
-
-;; TODO (defclass interpreter ()
-;;   (
+(defun initialize-display (&optional force)
+  (when (or force (null *display*))
+    (setf *display* (xlib:open-default-display))))
 
 ;;; Widgets
 
@@ -289,7 +383,6 @@ operation to occur is determined by the classes of SOURCE and SINK."))
   (:documentation "Exit any server grabs the widget may have initiated."))
 
 (defmethod quit ((w widget))
-  (message "Ungrabbing keyboard.")
   (setf (focusing *system-panel*) nil)
   (xlib:ungrab-keyboard *display*))
 
@@ -388,14 +481,15 @@ subcomponents should override this method."))
    (window :accessor window :initform nil :initarg :window)
    (canvas :accessor canvas :initform nil :initarg :canvas)))
 
-;;; Controlling stumpmwm
+;;; Sending and receiving X Property Change events
 
-;; :. stumpwm > 
+;; :. xprop > 
 
-(defmethod init-stumpwm-commands ((p panel))
-  ;; we want stumpwm responses from root window
+(defmethod init-xprop-commands ((p panel))
   (setf (xlib:window-event-mask (xlib:screen-root (screen p)))
 	'(:property-change)))
+
+;; :. stumpwm > 
 
 (defmethod stumpwm-command ((p panel) command)
   (xlib:change-property (xlib:screen-root (screen p))
@@ -434,13 +528,13 @@ subcomponents should override this method."))
 		  :depth (xlib:drawable-depth (xlib:screen-root screen))
 		  :class :input-output
 		  :event-mask '(:exposure :button-press :key-press
-				:property-change ;; :. commands >
+				:property-change ;; :. xprop >
+				                 ;; :. messages >
 				:button-release :pointer-motion)))
-    (message "Changing window type.")
     (change-window-type f "_NET_WM_WINDOW_TYPE_DOCK")
     (set-sticky f)
     (xlib:display-finish-output *display*)
-    (init-stumpwm-commands f)
+    (init-xprop-commands f) ;; :. xprop > 
     (setf canvas (new-canvas f window))
     (setf font (xlib:open-font *display* *system-panel-font*))
     (setf context (xlib:create-gcontext :drawable canvas
@@ -525,7 +619,7 @@ subcomponents should override this method."))
 		(xlib:drawable-y window) (- (+ head-y head-height) panel-height))
 	  (setf canvas (new-canvas p window head-height head-width)))))
 
-;;; Widget rendering
+;;; Widget and panel rendering
 
 (defparameter *widget-horizontal-margin* 4)
 (defparameter *widget-vertical-margin* 2)
@@ -534,7 +628,6 @@ subcomponents should override this method."))
 (defun X-default-render-widget (widget drawable context font)
   "Render the WIDGET with default X appearance to DRAWABLE with
 gcontext CONTEXT and font FONT."
-  (message "X-default-render-widget")
   (with-slots (position-x position-y label height width) widget
     ;; calculate size of widget based on font
     (setf width (max *widget-minimum-width*
@@ -565,22 +658,17 @@ appearances should override this method."))
 associated window."))
 
 (defmethod render ((f panel))
-  (message "Rendering panel...")
   (fresh-line)
   (with-slots (canvas widget context clear-context window) f
-    (message "Clearing background.")
     ;; clear background
     (xlib:draw-rectangle canvas clear-context 0 0 
 			 (xlib:drawable-width window)
 			 (xlib:drawable-height window)
 			 :fill)
-    (message "Rendering widgets.")
     ;; render widgets 
     (dolist (child (children (widget f)))
-      (message "...")
       (render-widget f child))
     ;; copy back buffer to window
-    (message "Copying to screen.")
     (xlib:copy-area canvas context 0 0 
 		    (xlib:drawable-width window)
 		    (xlib:drawable-height window)
@@ -646,7 +734,6 @@ position."))
        (xlib:event-case (*display* :discard-p t :force-output-p t)
 	 (exposure
 	  (window)
-	  (message "Running panels...")
 	  (let ((panel (find-panel window)))
 	    (when panel
 	      (render panel)
@@ -705,6 +792,14 @@ position."))
 	      (map-key widget key keysym state-keys)
 	      (render panel)))
 	  nil)
+	 ;;
+	 (property-notify
+	  (window atom)
+	  (when (eq atom :stun_command)
+	    (let ((message-string (xlib:get-property window atom)))
+	      ;; TODO process message
+	      (format t "PROPERTY: ~A" message-string))
+	    nil))
 	 ;;
 	 (motion-notify
 	  (window button)
@@ -1261,7 +1356,7 @@ in worksheet WRK at location X Y."
   "Get the stun library ready to go."
   (initialize-display)
   (initialize-keymap-table)
-;;  (initialize-root-container)
+  (initialize-root-container)
   (setf *window->panel* (make-hash-table :test #'equal))
   ;;
   ;; define initial keymaps
@@ -1318,14 +1413,11 @@ in worksheet WRK at location X Y."
 
     (setf *system-panel* panel)
 
-    (message "Created panel window.")
     (xlib:display-finish-output *display*)
 
-    (message "Resizing panel window.")
     (auto-resize panel)
     (xlib:display-finish-output *display*)
 
-    (message "Adding widgets.")
     (let* ((worksheet (make-instance 'worksheet))
 	   (strip (make-instance 'strip))
 	   (listener (make-instance 'listener :visible-lines 2)))
@@ -1341,7 +1433,6 @@ in worksheet WRK at location X Y."
       
       (xlib:display-finish-output *display*)
       
-      (message "Preparing to run panel.")
       ;; now get going
       (run-panels))))
 
