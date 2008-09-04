@@ -1,0 +1,17 @@
+* TODO STUN
+** DONE (info "(clx) Events and Input") use stumpish comms protocol for messages
+CLOSED: [2008-09-04 Thu 05:45]
+** DONE send back to emacs via standard output
+CLOSED: [2008-09-04 Thu 05:46]
+** TODO Run stun as an emacs inferior process with sdtin/stdout
+** TODO general fore/back strip browser menu container
+** TODO BUTTON TEST
+** TODO simple protocol://linkdata URL handler system
+** TODO simple "verb object" commands
+** TODO stun.el
+** TODO Notification area with scrollback
+** TODO [#C] split out queue.lisp
+** TODO launch programs
+** TODO mount points
+** TODO Basically just a widget kit for emacs. emacs does the usb and shell stuff
+** TODO very basic menu widget with cursor nav
