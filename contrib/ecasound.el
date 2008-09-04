@@ -4,7 +4,8 @@
 
 ;; Author: Mario Lang <mlang@delysid.org>
 ;; Keywords: audio, ecasound, eci, comint, process, pcomplete
-;; Version: 0.8.3
+;; Version: 0.8.4
+;; Maintainer: David O'Toole <dto@gnu.org>
 
 ;; This file is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
