@@ -14,6 +14,7 @@
   :license "General Public License (GPL) Version 3"
   :description "A desktop hyperenvironment in Emacs Lisp and Common Lisp."
   :serial t
-  :depends-on (:xlib)
-  :components ((:file "stun")))
+  :depends-on (:clx)
+  :components ((:file "stun")
+	       (:file "clon"))
 

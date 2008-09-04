@@ -1,11 +1,11 @@
-;;; usb.el --- find and manage certain USB devices on GNU/Linux
+;;; disk.el --- disk mounter module for STUN
 
 ;; Copyright (C) 2007  David O'Toole
 
 ;; Author: David O'Toole <dto@monad.lab>
 ;; Keywords: hardware
-;; $Id: usb.el,v 0.7 2007/11/05 03:23:28 dto Exp dto $
-;; Time-stamp: <2007-11-30 15:29:11 dto>
+;; $Id: disk.el,v 0.7 2007/11/05 03:23:28 dto Exp dto $
+;; Time-stamp: <2008-09-04 18:08:42 dto>
 
 ;; This file is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -26,24 +26,23 @@
 
 ;;; Commentary:
 
-;; This library provides some little utilities for working with USB
-;; Mass Storage devices on GNU/Linux.
-;;
+;; This program provides an alternative disk mounting tool. It is
+;; implemented as a STUN module.
+
 ;; It would probably not be hard to make this configurable so that it
 ;; works with other operating systems. If you use another operating
 ;; system and would like to help me get it working there, let me know.
 ;;
 ;; Features:
 ;;  - Scan for attached USB Mass Storage devices and find their UUID's
-;;    (see `usb-scan-disks')
-;;  - Assign unique names to devices (see `usb-disks-alist')
+;;    (see `disk-scan-disks')
+;;  - Assign unique names to devices (see `disk-disks-alist')
 ;;  - Automatically create and configure mount points and UUID's in /etc/fstab
-;;    (see `usb-write-fstab', `usb-scan-and-configure')
+;;    (see `disk-write-fstab', `disk-scan-and-configure')
 ;;  - Mount/unmount disks interactively, with auto-completion
-;;    (see `usb-mount' and `usb-unmount')
+;;    (see `disk-mount' and `disk-unmount')
 
 ;; Future:
-;;  - TODO support configurable filesystem types
 ;;  - TODO Report new disks when hotplugged? (periodic scan, automount?)
 ;;  - TODO Configure USB Audio devices with ALSA/JACK. use jack.el!
 ;;  - TODO fix mount point permissions
@@ -55,56 +54,56 @@
 
 ;;; Finding disks by their UUID's
 
-(defvar usb-uuids ()
+(defvar disk-uuids ()
   "List of UUID's found during last scan.")
 
-(defvar usb-new-uuids ()
+(defvar disk-new-uuids ()
   "List of newly attached UUID's, if any.")
 
-(defvar usb-uuid-directory "/dev/disk/by-uuid"
+(defvar disk-uuid-directory "/dev/disk/by-uuid"
   "Directory to read when scanning for UUID's.")
 
-(defun* usb-current-uuids (&optional (file usb-uuid-directory))
+(defun* disk-current-uuids (&optional (file disk-uuid-directory))
   "Obtain a list of currently attached UUID's."
   (remove-if #'(lambda (file-name)
 		 (string-match (rx ?. (* anything)) file-name))
-	    (directory-files usb-uuid-directory)))
+	    (directory-files disk-uuid-directory)))
 
-(defun usb-format-uuids (uuids &optional show-names)
+(defun disk-format-uuids (uuids &optional show-names)
   (mapconcat (lambda (uuid)
 	       (if show-names
-		   (let ((name (usb-mount-point-from-uuid uuid)))
+		   (let ((name (disk-mount-point-from-uuid uuid)))
 		     (format "[%s %s]" (or name "???") uuid))
 		 uuid))
 	     uuids
 	     " "))
 
-(defun usb-scan-disks ()
+(defun disk-scan-disks ()
   "Scan for attached disks and attempt to detect any new disks."
   (interactive)
   (message "Scanning for attached disks...")
-  (let* ((uuids (usb-current-uuids))
-	 (new-uuids (set-difference uuids usb-uuids :test 'equal)))
+  (let* ((uuids (disk-current-uuids))
+	 (new-uuids (set-difference uuids disk-uuids :test 'equal)))
     (message "Scanning for attached disks... Done.")
     ;;
     (when uuids
-      (message "Found UUIDs: %s" (usb-format-uuids uuids :show-names)))
-    (setf usb-uuids uuids)
+      (message "Found UUIDs: %s" (disk-format-uuids uuids :show-names)))
+    (setf disk-uuids uuids)
     ;;
     (when new-uuids 
-      (message "New UUIDs: %s" (usb-format-uuids new-uuids :show-names)))
-    (setf usb-new-uuids new-uuids)
+      (message "New UUIDs: %s" (disk-format-uuids new-uuids :show-names)))
+    (setf disk-new-uuids new-uuids)
     uuids))
   
 ;;; Naming your disks
 
-(defvar usb-disks-alist ()
+(defvar disk-disks-alist ()
   "Association list mapping disk names (i.e. mount points) to
 property lists whose contents describe the disks.
 
-The list should contain an entry for each of the disks (i.e. USB
+The list should contain an entry for each of the disks (i.e. DISK
 Mass Storage Class devices) that you will be using, assigning a
-unique name to each. (If you set `usb-write-fstab-p' to a
+unique name to each. (If you set `disk-write-fstab-p' to a
 non-nil value, then these names will also be used for the
 filesystem mount points.)
 
@@ -126,127 +125,127 @@ surfaces. (I write on the back of the card where there is no
 sticker.)
 
 You can find out your devices' UUIDs with the function
-`usb-scan-disks', and use `usb-fstab-entries' to generate fstab
-entries. The function `usb-write-fstab' will add appropriate
+`disk-scan-disks', and use `disk-fstab-entries' to generate fstab
+entries. The function `disk-write-fstab' will add appropriate
 entries to /etc/fstab (via TRAMP by default; use the variable
-`usb-fstab-file' to customize this behavior.)
+`disk-fstab-file' to customize this behavior.)
 
 Even simpler, you can use the interactive function
-`usb-scan-and-configure' to do both jobs for you. In this case,
+`disk-scan-and-configure' to do both jobs for you. In this case,
 changes to /etc/fstab will only be made when the variable
-`usb-write-fstab-p' has a non-nil value. (You should set
-`usb-disks-alist' before doing this.)
+`disk-write-fstab-p' has a non-nil value. (You should set
+`disk-disks-alist' before doing this.)
 
 Example:
 
-  (setf usb-disks-alist
+  (setf disk-disks-alist
         '((\"/zoom/1\" :uuid \"3734-3937\" :file-system \"vfat\")
 	  (\"/zoom/2\" :uuid \"2931-A206\" :file-system \"vfat\")
   	  (\"/red500\" :uuid \"e828ddbe-7bd8-442d-8523-a83518bed4de\" 
                        :fstype \"xfs\")))
-  (setf usb-write-fstab-p t)
-  (usb-scan-and-configure)
+  (setf disk-write-fstab-p t)
+  (disk-scan-and-configure)
 
 After you enter your root password for TRAMP, /etc/fstab will
 be updated.
 
-To mount and unmount the disks, use `usb-mount' and `usb-unmount'.
+To mount and unmount the disks, use `disk-mount' and `disk-unmount'.
 ")
 
 ;;; Automatically configuring /etc/fstab and mount points
 
-(defun usb-create-mount-point (mount-point)
+(defun disk-create-mount-point (mount-point)
   (message (format "Creating mount point %s..." mount-point))
   (make-directory (concat "/su::" mount-point) :parents))
 
-(defun usb-create-mount-point-maybe (mount-point)
+(defun disk-create-mount-point-maybe (mount-point)
   (when (not (file-exists-p mount-point))
-    (usb-create-mount-point mount-point)))
+    (disk-create-mount-point mount-point)))
 
-(defun usb-mount-point-from-uuid (uuid)
+(defun disk-mount-point-from-uuid (uuid)
   (car-safe (find-if #'(lambda (entry)
 			 (string= uuid (getf (cdr entry) :uuid)))
-		     usb-disks-alist)))
+		     disk-disks-alist)))
 		     
-(defun usb-uuid-from-mount-point (mount-point)
-  (getf (cdr-safe (assoc mount-point usb-disks-alist)) :uuid))
+(defun disk-uuid-from-mount-point (mount-point)
+  (getf (cdr-safe (assoc mount-point disk-disks-alist)) :uuid))
 
-(defvar usb-write-fstab-p nil
+(defvar disk-write-fstab-p nil
   "When non-nil, attempt to update /etc/fstab when scanning devices.")
 
-(defvar usb-fstab-file "/su::/etc/fstab" 
+(defvar disk-fstab-file "/su::/etc/fstab" 
   "Tramp address for updating /etc/fstab.")
 
-(defvar usb-fstab-default-option-string "user,noauto")
+(defvar disk-fstab-default-option-string "user,noauto")
 
-(defun* usb-fstab-entry-string (mount-point &optional &key 
+(defun* disk-fstab-entry-string (mount-point &optional &key 
 					    uuid 
 					    (file-system "vfat")
-					    (options usb-fstab-default-option-string))
+					    (options disk-fstab-default-option-string))
   (format "UUID=%s\t%s\t%s\t%s\t0\t0\n"
 	  (or uuid (error "Cannot configure mount point with null UUID."))
 	  mount-point file-system options))
 
-(defun* usb-fstab-entries (&optional (disks usb-disks-alist))
+(defun* disk-fstab-entries (&optional (disks disk-disks-alist))
   "Generate fstab entries for the disk names in the alist NAMES."
   (with-temp-buffer
     (dolist (disk disks)
-      (insert (apply #'usb-fstab-entry-string disk)))
+      (insert (apply #'disk-fstab-entry-string disk)))
     (buffer-substring-no-properties (point-min) (point-max))))
 
-(defun* usb-write-fstab ()
-  "Add (or replace) fstab entries for the UUID's in `usb-disks-alist'."
+(defun* disk-write-fstab ()
+  "Add (or replace) fstab entries for the UUID's in `disk-disks-alist'."
   (with-temp-buffer
     (insert-file-contents-literally "/etc/fstab")
     (message "Backing up /etc/fstab...")
-    (write-file (concat usb-fstab-file ".bak"))
+    (write-file (concat disk-fstab-file ".bak"))
     (message "Backing up /etc/fstab... Done.")
     (message "Updating /etc/fstab...")
     ;; 
     ;; remove any entries that we are updating...
     (dolist (uuid (mapcar #'(lambda (d)
 			      (getf (cdr d) :uuid))
-			  usb-disks-alist))
-      (usb-create-mount-point-maybe (usb-mount-point-from-uuid uuid))
+			  disk-disks-alist))
+      (disk-create-mount-point-maybe (disk-mount-point-from-uuid uuid))
       (goto-char (point-min))
       (while (re-search-forward (concat "^UUID=" uuid "\\(.\\|\n\\)*$") nil :noerror)
 	(replace-match "")))
     ;;
     ;; now append new entries
     (goto-char (point-max))
-    (insert (usb-fstab-entries))
-    (write-file usb-fstab-file)
+    (insert (disk-fstab-entries))
+    (write-file disk-fstab-file)
     (message "Updating /etc/fstab... Done.")))
 
-(defun usb-write-fstab-maybe (&optional force)
-  (when (or force usb-write-fstab-p)
-    (when (null usb-disks-alist)
-      (error "You must set `usb-disks-alist' before attempting to update /etc/fstab."))
-    (usb-write-fstab)))
+(defun disk-write-fstab-maybe (&optional force)
+  (when (or force disk-write-fstab-p)
+    (when (null disk-disks-alist)
+      (error "You must set `disk-disks-alist' before attempting to update /etc/fstab."))
+    (disk-write-fstab)))
 
 ;;; Choosing and mounting disks
 
-(defvar usb-mount-command-string "mount")
+(defvar disk-mount-command-string "mount")
 
-(defvar usb-unmount-command-string "umount")
+(defvar disk-unmount-command-string "umount")
 
-(defun usb-mounted-disks ()
-  "Return a list of currently mounted USB disks."
+(defun disk-mounted-disks ()
+  "Return a list of currently mounted DISK disks."
   (with-temp-buffer 
-    (shell-command usb-mount-command-string t)
+    (shell-command disk-mount-command-string t)
     (let (mounted)
-      (dolist (disk (mapcar #'car usb-disks-alist))
+      (dolist (disk (mapcar #'car disk-disks-alist))
 	(goto-char (point-min))
 	(when (search-forward disk nil :noerror)
 	  (push disk mounted)))
       mounted)))
 
-(defvar usb-choose-disk-prompt "Choose USB Mass Storage Class disk: ")
+(defvar disk-choose-disk-prompt "Choose DISK Mass Storage Class disk: ")
 
-(defun* usb-choose-disk (&optional (choices (mapcar #'car usb-disks-alist)))
-  (completing-read usb-choose-disk-prompt choices nil :require-match))
+(defun* disk-choose-disk (&optional (choices (mapcar #'car disk-disks-alist)))
+  (completing-read disk-choose-disk-prompt choices nil :require-match))
 
-(defun* usb-mount (&optional (mount-point (usb-choose-disk))
+(defun* disk-mount (&optional (mount-point (disk-choose-disk))
 			     (command :mount))
   "Mount (or unmount) the device corresponding to MOUNT-POINT.
 If no MOUNT-POINT is specified, the user is prompted for a
@@ -255,8 +254,8 @@ device (with completion.)
 Mount if COMMAND is :mount, otherwise unmount. The default is :mount."
   (interactive)
   (let ((command-string (if (eq command :mount)
-			    usb-mount-command-string
-			  usb-unmount-command-string)))
+			    disk-mount-command-string
+			  disk-unmount-command-string)))
     (destructuring-bind (status output)
 	(with-temp-buffer 
 	  (list 
@@ -269,14 +268,14 @@ Mount if COMMAND is :mount, otherwise unmount. The default is :mount."
 		       (if (= 0 status) "OK" "FAILED")
 		       output)))))
 
-(defun* usb-unmount (&optional (mount-point (usb-choose-disk)))
+(defun* disk-unmount (&optional (mount-point (disk-choose-disk)))
   (interactive)
-  (usb-mount mount-point :unmount))
+  (disk-mount mount-point :unmount))
 
-(defun usb-scan-and-configure ()
+(defun disk-scan-and-configure ()
   (interactive)
-  (usb-scan-disks)
-  (usb-write-fstab-maybe))
+  (disk-scan-disks)
+  (disk-write-fstab-maybe))
   
-(provide 'usb)
-;;; usb.el ends here
+(provide 'disk)
+;;; disk.el ends here

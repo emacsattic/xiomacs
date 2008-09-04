@@ -1,0 +1,42 @@
+This README is a quick overview of the project and the repository.
+
+Description: STUN is a graphical Lisp power-user desktop environment
+	     for X11, based on GNU Emacs, Common Lisp, and the Stump
+	     Window Manager.
+
+Requirements: X11 -- http://www.x.org
+	      Common Lisp -- (SBCL recommended) http://www.sbcl.org
+	      GNU Emacs 23.x -- http://www.gnu.org/software/emacs
+	      
+
+Status: Pre-alpha, may or may not work
+
+Files:
+
+README      This file.
+COPYING     GNU General Public License text.
+CREDITS     People I would like to thank.
+INSTALL     Installation instructions.
+
+stun.asd    ASDF system definition
+stun.lisp   STUN desktop manager and widget toolit
+stun.el     Emacs client support for STUN desktop manager
+
+radio.el    Code tagging and navigation tool.
+            Useful for getting around the code base.
+
+clon.lisp   Classless object system for Common Lisp.
+clon.el     GNU Emacs editing support for CLON.
+
+grid.el     Two-dimensional array library for GNU Emacs.
+cell.el     Spreadsheet and image mosaic display engine for GNU Emacs.
+
+eon.el      Simple class-based object system for Emacs Lisp.
+
+disk.el     Disk-mounting module for STUN
+
+uuidgen.el  Generating universally unique identifiers (UUID's)
+
+contrib/jack.el  Mario Lang's jackd control library for Emacs.
+contrib/ecasound.el  Mario Lang's ecasound control library for Emacs.
+

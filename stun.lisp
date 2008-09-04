@@ -174,8 +174,11 @@
   (with-output-to-string (stream)
     (print-message message stream)))
 
-(defun client-message (address &rest args)
+(defun send-client-message (address &rest args)
   (print-message (cons address args)))
+
+(defun send-client-string (string)
+  (format *standard-output* "~A#\Newline" string))
 
 ;;; From addresses to actions: the container tree
 
@@ -441,6 +444,8 @@ subcomponents should override this method."))
 (defvar *system-panel* nil "The standard panel at the bottom of the screen.")
 
 (defvar *window->panel* "Hash table mapping X window ID's to panel objects.")
+
+(defvar *current-panel* nil)
 
 (defun find-panel (window)
   (gethash window *window->panel*))
@@ -729,150 +734,158 @@ position."))
 ;;; The X event loop
 
 (defun run-panels ()
-  ;; TODO document this
-  (unwind-protect 
-       (xlib:event-case (*display* :discard-p t :force-output-p t)
-	 (exposure
-	  (window)
-	  (let ((panel (find-panel window)))
-	    (when panel
-	      (render panel)
-	      nil)))
-	 ;;
-	 (button-release 
-	  (window state)
-	  (let ((panel (find-panel window))
-		(state-keys (xlib:make-state-keys state)))
-	    (when panel
-	      (multiple-value-bind (x y)
-		  (xlib:pointer-position window)
-		(cond 
-		  ((and (member :button-1 state-keys) 
-			(dragging-enabled panel))
-		   (stop-dragging panel)
-		   (render panel))
-		  ((member :button-3 state-keys)
-		   (stop-joining panel x y)
-		   (render panel))))))
-	  nil)
-	 ;;
-	 (button-press
-	  (window)
-	  (multiple-value-bind (x y s c state) 
-	      (xlib:query-pointer window)
-	    (let ((panel (find-panel window))
-		  (state-keys (xlib:make-state-keys state)))
-	      (when panel
-		(multiple-value-bind (x y)
-		    (xlib:pointer-position window)
-		  (cond 
-		    ((member :button-1 state-keys)
-		     (xlib:grab-keyboard (window panel))
-		     (click panel x y)
-		     (render panel))
-		    ;; TODO dragging disabled for now
-		    ;; ((and (member :button-1 state-keys)
-		    ;; 	  (dragging-enabled panel))
-		    ;;    (start-dragging panel x y))
-		    ((member :button-3 state-keys)
-		     (start-joining panel x y)))))))
-	  nil)
-	 ;;
-	 (key-press
-	  (window code state)
-	  (let* ((panel (find-panel window))
-		 (state-keys (xlib:make-state-keys state))
-		 (widget (or (focusing panel) (widget panel)))
-		 (keysym (xlib:keycode->keysym *display* 
-					       code (if (member :shift state-keys)
-							1
-							0)))
-		 (key (xlib:keysym->character *display* keysym)))
-	    (when widget
-	      (map-key widget key keysym state-keys)
-	      (render panel)))
-	  nil)
-	 ;;
-	 (property-notify
-	  (window atom)
-	  (when (eq atom :stun_command)
-	    (let ((message-string (xlib:get-property window atom)))
-	      ;; TODO process message
-	      (format t "PROPERTY: ~A" message-string))
-	    nil))
-	 ;;
-	 (motion-notify
-	  (window button)
-	  (multiple-value-bind (x y)
-	      (xlib:pointer-position window)
-	    (let* ((panel (find-panel window))
-		   (widgets (children (widget panel)))
-		   (dragged-widget (dragging panel))
-		   (joined-widget (joining panel)))
-	      (cond
-		((and dragged-widget panel)
-		 (move dragged-widget x y)
-		 (render panel))
-		;;
-		((and joined-widget panel)
-		 nil))
-	      ;; hit-test to see what cursor we should use. 
-	      (let ((cursor 
-		     (let ((widget (hit-widgets widgets x y)))
-		       (if widget
-			   (case (cursor-key widget)
-			     (:cursor (cursor panel))
-			     (:join-cursor (join-cursor panel))
-			     (:touch-cursor (touch-cursor panel)))
-			   (cursor panel)))))
-		(setf (xlib:window-cursor window) cursor))))
- 	  nil))
-    (xlib:close-display *display*)))
+  (xlib:event-case (*display* :discard-p t :force-output-p t)
+    (exposure
+     (window)
+     (let ((panel (find-panel window)))
+       (when panel
+	 (render panel)
+	 nil)))
+    ;;
+    (button-release 
+     (window state)
+     (let ((panel (find-panel window))
+	   (state-keys (xlib:make-state-keys state)))
+       (when panel
+	 (let ((*current-panel* panel))
+	   (multiple-value-bind (x y)
+	       (xlib:pointer-position window)
+	     (cond 
+	       ((and (member :button-1 state-keys) 
+		     (dragging-enabled panel))
+		(stop-dragging panel)
+		(render panel))
+	       ((member :button-3 state-keys)
+		(stop-joining panel x y)
+		(render panel)))))))
+     nil)
+    ;;
+    (button-press
+     (window)
+     (multiple-value-bind (x y s c state) 
+	 (xlib:query-pointer window)
+       (let ((panel (find-panel window))
+	     (state-keys (xlib:make-state-keys state)))
+	 (when panel
+	   (let ((*current-panel* panel))
+	     (multiple-value-bind (x y)
+		 (xlib:pointer-position window)
+	       (cond 
+		 ((member :button-1 state-keys)
+		  (click panel x y)
+		  (render panel))
+		 ;; TODO dragging disabled for now
+		 ;; ((and (member :button-1 state-keys)
+		 ;; 	  (dragging-enabled panel))
+		 ;;    (start-dragging panel x y))
+		 ((member :button-3 state-keys)
+		  (start-joining panel x y))))))))
+     nil)
+    ;;
+    (key-press
+     (window code state)
+     (let* ((panel (find-panel window))
+	    (state-keys (xlib:make-state-keys state))
+	    (widget (or (focusing panel) (widget panel)))
+	    (keysym (xlib:keycode->keysym *display* 
+					  code (if (member :shift state-keys)
+						   1
+						   0)))
+	    (key (xlib:keysym->character *display* keysym)))
+       (when widget
+	 (let ((*current-panel* panel))
+	   (map-key widget key keysym state-keys)
+	   (render panel))))
+     nil)
+    ;; :. xprop >
+    (property-notify
+     (window atom)
+     (when (eq atom :stun_command)
+       (let ((message-string (xlib:get-property window atom)))
+	 ;; TODO process message
+	 (format t "PROPERTY: ~A" message-string))
+       nil))
+    ;;
+    (motion-notify
+     (window button)
+     (multiple-value-bind (x y)
+	 (xlib:pointer-position window)
+       (let* ((panel (find-panel window))
+	      (widgets (children (widget panel)))
+	      (dragged-widget (dragging panel))
+	      (joined-widget (joining panel)))
+	 (let ((*current-panel* panel))
+	   (cond
+	     ((and dragged-widget panel)
+	      (move dragged-widget x y)
+	      (render panel))
+	     ;;
+	     ((and joined-widget panel)
+	      nil))
+	   ;; hit-test to see what cursor we should use. 
+	   (let ((cursor 
+		  (let ((widget (hit-widgets widgets x y)))
+		    (if widget
+			(case (cursor-key widget)
+			  (:cursor (cursor panel))
+			  (:join-cursor (join-cursor panel))
+			  (:touch-cursor (touch-cursor panel)))
+			(cursor panel)))))
+	     (setf (xlib:window-cursor window) cursor)))))
+     nil)))
+
 
 ;;; Textboxes
-                                           
+
 (defvar *textbox-margin* 2 "Default onscreen margin of a textbox.")
 
 (defclass textbox (widget) 
   ((buffer :accessor buffer :initform nil :initarg :buffer)
+   (width-chars :accessor width-chars :initform nil :initarg :width-chars)
    (point-row :accessor point-row :initform 0 :initarg :point-row)
    (point-column :accessor point-column :initform 0 :initarg :point-column)))
 
+(defmethod touch ((box textbox) x y)
+  (declare (ignore x y))
+  (xlib:grab-keyboard (window *current-panel*)))
+
 (defmethod render-widget ((f panel) (box textbox))
   (with-slots (window canvas context font highlight-context focusing) f
-    (with-slots (position-x position-y height width 
+    (with-slots (position-x position-y height width width-chars
 			    buffer point-row point-column) box
       (let* ((font-height (+ 2 (xlib:font-ascent font) (xlib:font-descent font))))
 	;; update textbox geometry
 	(let ((line-lengths (mapcar (lambda (s)
 				      (xlib:text-extents font s))
 				    buffer)))
-	  (setf width (max *widget-minimum-width*
-			   (+ (* 2 *textbox-margin*)
-			      (if (null line-lengths)
-				  0 (apply #'max line-lengths))))))				      
-	(setf height (+ (* 2 *textbox-margin*)
-			(* font-height (max 1 (length buffer)))))
-	;; draw border
-	(xlib:draw-rectangle canvas context 
-			     position-x position-y
-			     width height)
-	;; draw buffer
-	(let ((x (+ position-x *textbox-margin*))
-	      (y (+ -2 position-y *textbox-margin*)))
-	  (dolist (line buffer)
-	    (incf y font-height)
-	    (xlib:draw-glyphs canvas context x y line)))
-	;; draw cursor
-	(when (eq focusing box)
-	  (let* ((line (nth point-row buffer))
-		 (cursor-width (xlib:text-extents font " "))
-		 (x (+ position-x *textbox-margin*
-		       (xlib:text-extents font (subseq line 0 point-column))))
-		 (y (+ 2 position-y *textbox-margin*
-		       (* font-height point-row))))
-	    (xlib:draw-rectangle canvas highlight-context 
-				 x y cursor-width font-height t)))))))
+	  (setf width (if (numberp width-chars)
+			  (* width-chars (xlib:text-extents font "a"))
+			  (max *widget-minimum-width*
+			       (+ (* 2 *textbox-margin*)
+				  (if (null line-lengths)
+				      0 (apply #'max line-lengths))))))
+	  (setf height (+ (* 2 *textbox-margin*)
+			  (* font-height (max 1 (length buffer)))))
+	  ;; draw border
+	  ;; (xlib:draw-rectangle canvas context 
+	  ;; 		       position-x position-y
+	  ;; 		       width height)
+	  ;; draw buffer
+	  (let ((x (+ position-x *textbox-margin*))
+		(y (+ -2 position-y *textbox-margin*)))
+	    (dolist (line buffer)
+	      (incf y font-height)
+	      (xlib:draw-glyphs canvas context x y line)))
+	  ;; draw cursor
+	  (when (eq focusing box)
+	    (let* ((line (nth point-row buffer))
+		   (cursor-width (xlib:text-extents font " "))
+		   (x (+ position-x *textbox-margin*
+			 (xlib:text-extents font (subseq line 0 point-column))))
+		   (y (+ 2 position-y *textbox-margin*
+			 (* font-height point-row))))
+	      (xlib:draw-rectangle canvas highlight-context 
+				   x y cursor-width font-height t))))))))
 
 (defmethod default-map-key ((box textbox) key keysym modifiers)
   (declare (ignore keysym modifiers))
@@ -980,6 +993,8 @@ position."))
 
 (defparameter *listener-margin* 2 "Size of margins in listener.") 
 
+(defparameter *default-listener-width-chars* 80)
+
 (defclass listener (textbox)
   ((history-position :accessor history-position :initform 0 
 		     :initarg :history-position)
@@ -993,22 +1008,23 @@ position."))
   (with-slots (window canvas shadowed-context highlight-context
 		      accent-context font focusing) f
     (xlib:with-state (window)
-      (with-slots (position-x position-y height width 
+      (with-slots (position-x position-y height width width-chars
 			      buffer point-row point-column) L
 	(let* ((font-height (+ (xlib:font-ascent font) (xlib:font-descent font)))
 	       (font-width (xlib:text-extents font "a"))
 	       (listener-height (+ (* 2 *listener-margin*)
 				   (* (visible-lines L) font-height))))
 	  ;; update listener geometry
-	  (setf position-y (- (xlib:drawable-height window)
-			      listener-height))
-	  (setf position-x 0)
-	  (setf width (xlib:drawable-width window))
+	  ;; (setf position-y (- (xlib:drawable-height window)
+	  ;; 		      listener-height))
+	  ;; (setf position-x 0)
+	  (setf width (* font-width (or width-chars *default-listener-width-chars*)))
+	  ;;
 	  (setf height listener-height)
-	  ;; ;; draw border
-	  ;; (xlib:draw-line canvas accent-context 
-	  ;; 		  position-x position-y 
-	  ;; 		  (xlib:drawable-width window) position-y)
+	  ;;  draw border
+	  (xlib:draw-rectangle canvas shadowed-context 
+			       position-x position-y 
+			       width height)
 	  ;; draw text lines
 	  (let ((y (- (xlib:drawable-height window)
 		      *listener-margin*)))
@@ -1239,20 +1255,20 @@ hit-testing succeeds, nil otherwise."
 
 ;;; Buttons
 
-;; A button evaluates the lisp expression inside when you click on it.
+;; A button evalu
 
-(defclass button (textbox) ())
+(defclass button (textbox) 
+  ((action :initform nil :initarg :action :accessor action)))
 
 (defmethod render-widget ((f panel) (b button))
   (with-slots (context canvas font) f
     (X-default-render-widget b canvas context font)))
 
 (defmethod touch ((b button) x y)
-  (with-slots (label) b
-    (handler-case
-	(eval (read-from-string label))
-      ;; print any errors to standard output for now
-      (condition (c) (format t "~S" c)))))
+  (declare (ignore x y))
+  (with-slots (action) b
+    (when (stringp b)
+      (send-client-string action))))
 
 ;;; Templates
 
@@ -1296,7 +1312,7 @@ in worksheet WRK at location X Y."
 ;; (defmethod initialize-instance ((s strip))
 ;;   (let ((button (make-instance 'button
 
-(defmethod push-page ((s strip) (page widget))
+(defmethod push-page ((s strip) page)
   (push page (pages s)))
 
 (defmethod pop-page ((s strip))
@@ -1304,12 +1320,12 @@ in worksheet WRK at location X Y."
 
 (defmethod current-page ((s strip))
   (when (pages s)
-    (car pages)))
+    (car (pages s))))
 
 (defmethod push-widget ((s strip) (w widget))
   (with-slots (pages) s
     (cond ((null pages)
-	   (setf pages (list (list widget))))
+	   (setf pages (list (list w))))
 	  ((listp (first pages))
 	   (push w (first pages)))
 	  (t (error "Should not be reached.")))))
@@ -1317,17 +1333,17 @@ in worksheet WRK at location X Y."
 (defmethod pop-widget ((s strip))
   (with-slots (pages) s
     (when (and pages (listp (first pages)))
-    (pop (first pages)))))
-    
+      (pop (first pages)))))
+
 (defparameter *strip-margin* 2)
 
 (defmethod render-widget ((f panel) (s strip))
   (with-slots (window canvas accent-context font) f
     (let ((strip-height (+ 4
-			     (* 2 *strip-margin*) 
-			     (* 2 *widget-vertical-margin*)
-			     (xlib:font-ascent font)
-			     (xlib:font-descent font))))
+			   (* 2 *strip-margin*) 
+			   (* 2 *widget-vertical-margin*)
+			   (xlib:font-ascent font)
+			   (xlib:font-descent font))))
       ;; update strip geometry 
       (with-slots (position-x position-y height width) s
 	(setf position-x 0)
@@ -1389,7 +1405,7 @@ in worksheet WRK at location X Y."
   (define-key 'dataflow '(:key #\Backspace) #'backward-delete-char)
   (define-key 'dataflow '(:key #\Escape) #'quit)
   (define-key 'dataflow '(:modifiers (:control) :key #\g) #'quit)
- ;;
+  ;;
   (define-key 'listener '(:modifiers (:control) :key #\f) #'forward-char)
   (define-key 'listener '(:modifiers (:control) :key #\b) #'backward-char)
   (define-key 'listener '(:modifiers (:alt) :key #\n) #'next-history)
@@ -1423,13 +1439,13 @@ in worksheet WRK at location X Y."
 	   (listener (make-instance 'listener :visible-lines 2)))
       (setf (widget panel) worksheet)
       (dotimes (i 4)
-	(let ((box (make-instance 'button
-				  :parent strip
-				  :label (nth i 
-					      '("mount" "browse" "properties" "<< back")))))
-	  (adjoin-child strip box)))
+	(let ((button (make-instance 'button
+				     :parent strip
+				     :label (nth i 
+						 '("mount" "browse" "properties" "<< back")))))
+	  (push-widget strip button)))
       (adjoin-child worksheet strip)
-      (adjoin-child strip listener)
+      (push-widget strip listener)
       
       (xlib:display-finish-output *display*)
       
