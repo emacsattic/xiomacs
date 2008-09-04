@@ -48,8 +48,172 @@
     (setf *display* (xlib:open-default-display))))
 
 (defun message (control-string &rest args)
-  (apply #'format t control-string args)
+  "Print a message to the standard error."
+  (apply #'format *error-output* control-string args)
   (fresh-line))
+
+(defparameter *user-init-file-name* ".stunrc")
+
+(defvar *initialization-hook* nil)
+
+(defun load-user-init-file ()
+  (load (merge-pathnames (make-pathname :name *user-init-file-name*)
+			 (user-homedir-pathname))))
+
+;;; Keymaps: binding keypresses to CLOS methods
+
+;; A keypress is a triple of the form (key keysym modifiers).  
+;;
+;; A keymap is a list of functions to be called in order with the
+;; keypress as an argument, until one returns a method to be invoked
+;; on the object in question. If no method is obtained, the process
+;; repeats with the widget's parent.
+
+(defvar *class->keymap* nil "Hash table mapping class names to keymaps.")
+
+(defun initialize-keymap-table ()
+  (setf *class->keymap* (make-hash-table :test 'equal)))
+
+;; TODO rewrite to use macros
+(defun define-key (class-name key-spec func)
+  (destructuring-bind (&key key keysym modifiers) key-spec
+    (let ((preds nil))
+      (when key 
+	(push `(eql key ,key) preds))
+      (when keysym 
+	(push `(eql keysym ,keysym) preds))
+      (when modifiers
+	(push `(subsetp ',modifiers modifiers) preds))
+      (let ((tester (eval `(lambda (key keysym modifiers)
+			     (when (and ,@preds)
+			       ,func)))))
+	(push tester (gethash class-name *class->keymap*))))))
+
+(defun map-key (w key keysym modifiers)
+  (let* ((keymap (gethash (class-name (class-of w))
+			  *class->keymap*))
+	 (method (some (lambda (f)
+			 (funcall f key keysym modifiers))
+		       keymap)))
+    (if method
+	(funcall method w)
+	(when (not (default-map-key w key keysym modifiers))
+	  (when (parent w)
+	    (map-key (parent w) key keysym modifiers))))))
+
+;;; Customizing colors
+
+(defparameter *foreground-color* '(:red 0.8 :green 0.8 :blue 0.8))
+(defparameter *background-color* '(:red 0.0 :green 0.0 :blue 0.0))
+(defparameter *accent-color* '(:red 1.0 :green 1.0 :blue 1.0))
+(defparameter *highlight-color* '(:red 0.92 :green 0.0 :blue 0.0))
+(defparameter *shadowed-color* '(:red 0.7 :green 0.7 :blue 0.7))
+(defparameter *active-color* '(:red 0.3 :green 0.7 :blue 0.8))
+(defparameter *border-color* '(:red 0.4 :green 0.4 :blue 0.4))
+
+(defun color-from-param (color-plist)
+  (xlib:alloc-color (xlib:screen-default-colormap (xlib:display-default-screen *display*))
+		    (apply #'xlib:make-color color-plist)))
+
+;;; Loading some pre-defined X cursors
+
+(defconstant arrow-cursor-id 132)
+(defconstant circle-cursor-id 24)
+(defconstant hand-cursor-id 60)
+
+(defun X-predefined-cursor (panel cursor-id)
+  "Load and return one of the predefined X cursors."
+  (let ((font (xlib:open-font *display* "cursor")))
+    (setf (xlib:window-cursor (window panel))
+	  (xlib:create-glyph-cursor :source-font font
+			       :source-char cursor-id
+			       :mask-font font
+			       :mask-char (1+ cursor-id)
+			       :foreground 
+			       (xlib:make-color :red 1.0 :green 1.0 :blue 1.0)
+			       :background 
+			       (xlib:make-color :red 0.0 :green 0.0 :blue 0.0)))))
+
+;;; Addressing
+
+;; Addresses are strings of the form "/foo/bar/baz" that identify
+;; resources and actions in a STUN communications session.
+
+;; The address space is hierarchical like a unix filesystem, and the
+;; components of an address are separated by `*address-delimiter*',
+;; which is forward-slash by default. As with OSC we use the term
+;; "container" for the internal nodes (i.e. directories) and "method"
+;; for the leaves. 
+
+(defparameter *address-delimiter* #\/)
+
+(defun address-number-of-components (address)
+  (count *message-address-delimiter* address))
+
+(defun find-address-delimiter (address &key start)
+  (position *address-delimiter* address :start start))
+
+(defun address-head (address)
+  (subseq address 0 (find-address-delimiter address)))
+
+(defun address-remainder (address)
+  (subseq address (1+ (find-address-delimiter address))))
+
+(defun address-relative-p (address)
+  (not (string= "" (address-head address))))
+
+(defun nth-address-component (n address)
+  (assert (>= n 0))
+  (let ((cursor 0))
+    ;; seek to nth delimiter
+    (block seeking
+      (dotimes (i n)
+	(setf cursor (find-address-delimiter address
+					     :start cursor))
+	(if (null cursor)
+	  (return-from seeking)
+	  (incf cursor))))
+    ;; extract string
+    (subseq address cursor (find-address-delimiter address
+						   :start cursor))))
+
+;;; Messages
+
+;; A message is a cons of (ADDRESS . ARGUMENT-DATA) where ADDRESS is a
+;; string of the form "/foo/bar/baz" and ARGUMENT-DATA can be
+;; anything (including nil).
+
+;; Sending: *standard-output* so that emacs can wake up and read it
+;; Receiving: :property-change event mask
+  
+(defun message-p (m)
+  (and (consp m)
+       (stringp (car m))))
+
+(deftype message () '(satisfies message-p))
+
+(defun message-address (m)
+  (car m))
+
+(defun message-arguments (m)
+  (cdr m))
+
+(defun read-message-from-string (string)
+  (read-from-string (concatenate 'string
+				 "(" string ")")))
+
+;; Containers are just CLOS interpreter objects and nodes are methods.
+
+;; TODO container class
+
+(defvar *root-container* nil)
+
+;; (defun initialize-root-container ()
+
+;; TODO (defun container-lookup (container
+
+;; TODO (defclass interpreter ()
+;;   (
 
 ;;; Widgets
 
@@ -158,46 +322,6 @@ subcomponents should override this method."))
 (defun hit-widgets-or-parent (widgets parent x y)
   (or (hit-widgets widgets x y) parent))
 
-;;; Keymaps: binding keypresses to CLOS methods
-
-;; A keypress is a triple of the form (key keysym modifiers).  
-;;
-;; A keymap is a list of functions to be called in order with the
-;; keypress as an argument, until one returns a method to be invoked
-;; on the object in question. If no method is obtained, the process
-;; repeats with the widget's parent.
-
-(defvar *class->keymap* nil "Hash table mapping class names to keymaps.")
-
-(defun initialize-keymap-table ()
-  (setf *class->keymap* (make-hash-table :test 'equal)))
-
-(defun define-key (class-name key-spec func)
-  (destructuring-bind (&key key keysym modifiers) key-spec
-    (let ((preds nil))
-      (when key 
-	(push `(eql key ,key) preds))
-      (when keysym 
-	(push `(eql keysym ,keysym) preds))
-      (when modifiers
-	(push `(subsetp ',modifiers modifiers) preds))
-      (let ((tester (eval `(lambda (key keysym modifiers)
-			     (when (and ,@preds)
-			       ,func)))))
-	(push tester (gethash class-name *class->keymap*))))))
-
-(defun map-key (w key keysym modifiers)
-  (let* ((keymap (gethash (class-name (class-of w))
-			  *class->keymap*))
-	 (method (some (lambda (f)
-			 (funcall f key keysym modifiers))
-		       keymap)))
-    (if method
-	(funcall method w)
-	(when (not (default-map-key w key keysym modifiers))
-	  (when (parent w)
-	    (map-key (parent w) key keysym modifiers))))))
-
 ;;; Panels: X windows full of STUN widgets
 
 ;; A panel is an X window for viewing and interacting with widgets.
@@ -221,17 +345,17 @@ subcomponents should override this method."))
 ;; The user can type with the keyboard into the focused widget. The
 ;; method name to be invoked is looked up in the widget's keymap.
 
-(defparameter *panel-font* "7x14")
-(defparameter *panel-height* 20)
-(defparameter *panel-position* :bottom)
-(defparameter *panel-padding* 1)
+(defvar *system-panel* nil "The standard panel at the bottom of the screen.")
 
 (defvar *window->panel* "Hash table mapping X window ID's to panel objects.")
 
-(defvar *system-panel* nil "The standard panel at the bottom of the screen.")
-
 (defun find-panel (window)
   (gethash window *window->panel*))
+
+(defparameter *system-panel-font* "7x14")
+(defparameter *system-panel-height* 20)
+(defparameter *system-panel-position* :bottom)
+(defparameter *system-panel-padding* 1)
 
 (defclass panel ()
   (;; the main widget   
@@ -264,36 +388,9 @@ subcomponents should override this method."))
    (window :accessor window :initform nil :initarg :window)
    (canvas :accessor canvas :initform nil :initarg :canvas)))
 
-;;; Loading some pre-defined X cursors
+;;; Controlling stumpmwm
 
-(defconstant arrow-cursor-id 132)
-(defconstant circle-cursor-id 24)
-(defconstant hand-cursor-id 60)
-
-(defun X-predefined-cursor (panel cursor-id)
-  "Load and return one of the predefined X cursors."
-  (let ((font (xlib:open-font *display* "cursor")))
-    (setf (xlib:window-cursor (window panel))
-	  (xlib:create-glyph-cursor :source-font font
-			       :source-char cursor-id
-			       :mask-font font
-			       :mask-char (1+ cursor-id)
-			       :foreground 
-			       (xlib:make-color :red 1.0 :green 1.0 :blue 1.0)
-			       :background 
-			       (xlib:make-color :red 0.0 :green 0.0 :blue 0.0)))))
-
-;;; Stumpwm integration
-
-(defmethod change-window-type ((p panel) window-type)
-  (xlib:change-property (window p) 
-			:_NET_WM_WINDOW_TYPE (vector (xlib:find-atom *display* window-type))
-			:atom 32))
-
-(defmethod set-sticky ((p panel))
-  (xlib:change-property (window p) 
-			:_NET_WM_STATE (vector (xlib:find-atom *display* "_NET_WM_STATE_STICKY"))
-			:atom 32))
+;; :. stumpwm > 
 
 (defmethod init-stumpwm-commands ((p panel))
   ;; we want stumpwm responses from root window
@@ -308,20 +405,6 @@ subcomponents should override this method."))
 (defmethod end-stumpwm-command ((p panel))
   (xlib:delete-property (xlib:screen-root (screen p))
 			:stumpwm_command))
-
-;;; Customizing colors
-
-(defparameter *foreground-color* '(:red 0.8 :green 0.8 :blue 0.8))
-(defparameter *background-color* '(:red 0.0 :green 0.0 :blue 0.0))
-(defparameter *accent-color* '(:red 1.0 :green 1.0 :blue 1.0))
-(defparameter *highlight-color* '(:red 0.92 :green 0.0 :blue 0.0))
-(defparameter *shadowed-color* '(:red 0.7 :green 0.7 :blue 0.7))
-(defparameter *active-color* '(:red 0.3 :green 0.7 :blue 0.8))
-(defparameter *border-color* '(:red 0.4 :green 0.4 :blue 0.4))
-
-(defun color-from-param (color-plist)
-  (xlib:alloc-color (xlib:screen-default-colormap (xlib:display-default-screen *display*))
-		    (apply #'xlib:make-color color-plist)))
 
 ;;; Creating panels
 
@@ -340,8 +423,8 @@ subcomponents should override this method."))
 		  :parent (xlib:screen-root screen)
 		  :x 0
 		  :y 0
-		  :height *panel-height*
-		  :width *panel-height*
+		  :height *system-panel-height*
+		  :width *system-panel-height*
 		  :background background
 		  :border foreground
 		  :border-width 0
@@ -351,6 +434,7 @@ subcomponents should override this method."))
 		  :depth (xlib:drawable-depth (xlib:screen-root screen))
 		  :class :input-output
 		  :event-mask '(:exposure :button-press :key-press
+				:property-change ;; :. commands >
 				:button-release :pointer-motion)))
     (message "Changing window type.")
     (change-window-type f "_NET_WM_WINDOW_TYPE_DOCK")
@@ -358,7 +442,7 @@ subcomponents should override this method."))
     (xlib:display-finish-output *display*)
     (init-stumpwm-commands f)
     (setf canvas (new-canvas f window))
-    (setf font (xlib:open-font *display* *panel-font*))
+    (setf font (xlib:open-font *display* *system-panel-font*))
     (setf context (xlib:create-gcontext :drawable canvas
 				   :foreground foreground
 				   :background background
@@ -406,6 +490,42 @@ subcomponents should override this method."))
     ;; save the panel so that we can look it up later
     (setf (gethash window *window->panel*) f)
     f))
+
+(defmethod new-canvas ((p panel) window &optional 
+			  (height (xlib:drawable-height (xlib:screen-root (screen p))))
+			  (width (xlib:drawable-width (xlib:screen-root (screen p)))))
+  (xlib:create-pixmap :width width
+		      :height height
+		      :depth (xlib:drawable-depth (xlib:screen-root (screen p)))
+		      :drawable window))
+
+;;; Properly positioning the system panel
+
+(defmethod change-window-type ((p panel) window-type)
+  (xlib:change-property (window p) 
+			:_NET_WM_WINDOW_TYPE (vector (xlib:find-atom *display* window-type))
+			:atom 32))
+
+(defmethod set-sticky ((p panel))
+  (xlib:change-property (window p) 
+			:_NET_WM_STATE (vector (xlib:find-atom *display* "_NET_WM_STATE_STICKY"))
+			:atom 32))
+
+(defmethod auto-resize ((p panel))
+  (with-slots (window canvas location screen) p
+    ;; TODO support other locations besides :bottom
+	(let* ((head-width (xlib:screen-width screen))
+	       (head-height (xlib:screen-height screen))
+	       (head-y 0)
+	       (head-x 0)
+	       (panel-height *system-panel-height*))
+	  (setf (xlib:drawable-width window) head-width
+		(xlib:drawable-height window) panel-height
+		(xlib:drawable-x window) head-x
+		(xlib:drawable-y window) (- (+ head-y head-height) panel-height))
+	  (setf canvas (new-canvas p window head-height head-width)))))
+
+;;; Widget rendering
 
 (defparameter *widget-horizontal-margin* 4)
 (defparameter *widget-vertical-margin* 2)
@@ -465,28 +585,6 @@ associated window."))
 		    (xlib:drawable-width window)
 		    (xlib:drawable-height window)
 		    window 0 0)))
-
-(defmethod new-canvas ((p panel) window &optional 
-			  (height (xlib:drawable-height (xlib:screen-root (screen p))))
-			  (width (xlib:drawable-width (xlib:screen-root (screen p)))))
-  (xlib:create-pixmap :width width
-		      :height height
-		      :depth (xlib:drawable-depth (xlib:screen-root (screen p)))
-		      :drawable window))
-
-(defmethod auto-resize ((p panel))
-  (with-slots (window canvas location screen) p
-    ;; TODO support other locations besides :bottom
-	(let* ((head-width (xlib:screen-width screen))
-	       (head-height (xlib:screen-height screen))
-	       (head-y 0)
-	       (head-x 0)
-	       (panel-height *panel-height*))
-	  (setf (xlib:drawable-width window) head-width
-		(xlib:drawable-height window) panel-height
-		(xlib:drawable-x window) head-x
-		(xlib:drawable-y window) (- (+ head-y head-height) panel-height))
-	  (setf canvas (new-canvas p window head-height head-width)))))
 
 ;;; User actions
 
@@ -1044,7 +1142,6 @@ hit-testing succeeds, nil otherwise."
 (defmethod cursor-key ((d dataflow))
   :touch-cursor)
 
-
 ;;; Buttons
 
 ;; A button evaluates the lisp expression inside when you click on it.
@@ -1095,43 +1192,68 @@ in worksheet WRK at location X Y."
 				:parent wrk)))
     (adjoin-child wrk widget)))
 
-;;; Toolbars
+;;; Strips
 
-;; A toolbar full of widgets is displayed across the top of the panel.
+(defclass strip (widget)
+  ((pages :initform nil :accessor pages :initarg :pages)
+   (back-button :initform nil :accessor back-button :initarg :pages)))
 
-(defclass toolbar (widget) ())
+;; (defmethod initialize-instance ((s strip))
+;;   (let ((button (make-instance 'button
 
-(defparameter *toolbar-margin* 2)
+(defmethod push-page ((s strip) (page widget))
+  (push page (pages s)))
 
-(defmethod render-widget ((f panel) (b toolbar))
+(defmethod pop-page ((s strip))
+  (pop (pages s)))
+
+(defmethod current-page ((s strip))
+  (when (pages s)
+    (car pages)))
+
+(defmethod push-widget ((s strip) (w widget))
+  (with-slots (pages) s
+    (cond ((null pages)
+	   (setf pages (list (list widget))))
+	  ((listp (first pages))
+	   (push w (first pages)))
+	  (t (error "Should not be reached.")))))
+
+(defmethod pop-widget ((s strip))
+  (with-slots (pages) s
+    (when (and pages (listp (first pages)))
+    (pop (first pages)))))
+    
+(defparameter *strip-margin* 2)
+
+(defmethod render-widget ((f panel) (s strip))
   (with-slots (window canvas accent-context font) f
-    (let ((toolbar-height (+ 4
-			     (* 2 *toolbar-margin*) 
+    (let ((strip-height (+ 4
+			     (* 2 *strip-margin*) 
 			     (* 2 *widget-vertical-margin*)
 			     (xlib:font-ascent font)
 			     (xlib:font-descent font))))
-      ;; update toolbar geometry 
-      (with-slots (position-x position-y height width) b
+      ;; update strip geometry 
+      (with-slots (position-x position-y height width) s
 	(setf position-x 0)
 	(setf position-y 0)
-	(setf height toolbar-height)
+	(setf height strip-height)
 	(setf width (xlib:drawable-width window)))
-      ;;
-      ;; draw toolbar border
+      ;; draw strip border
       ;; (xlib:draw-line canvas accent-context
-      ;; 		      0 toolbar-height
-      ;; 		      (xlib:drawable-width window) toolbar-height)
+      ;; 		      0 strip-height
+      ;; 		      (xlib:drawable-width window) strip-height)
       ;;
       ;; position and render children
-      (let ((x *toolbar-margin*))
-	(dolist (child (children b))
+      (let ((x *strip-margin*))
+	(dolist (child (current-page s))
 	  (setf (position-x child) x)
-	  (setf (position-y child) *toolbar-margin*)
+	  (setf (position-y child) *strip-margin*)
 	  (render-widget f child)
-	  (incf x (+ *toolbar-margin* (width child))))))))
+	  (incf x (+ *strip-margin* (width child))))))))
 
-(defmethod hit-test ((b toolbar) x y)
-  (hit-widgets (children b) x y))
+(defmethod hit-test ((s strip) x y)
+  (hit-widgets (current-page s) x y))
 
 ;;;; Initializing STUN
 
@@ -1139,6 +1261,7 @@ in worksheet WRK at location X Y."
   "Get the stun library ready to go."
   (initialize-display)
   (initialize-keymap-table)
+;;  (initialize-root-container)
   (setf *window->panel* (make-hash-table :test #'equal))
   ;;
   ;; define initial keymaps
@@ -1174,8 +1297,8 @@ in worksheet WRK at location X Y."
  ;;
   (define-key 'listener '(:modifiers (:control) :key #\f) #'forward-char)
   (define-key 'listener '(:modifiers (:control) :key #\b) #'backward-char)
-  (define-key 'listener '(:modifiers (:control) :key #\n) #'next-history)
-  (define-key 'listener '(:modifiers (:control) :key #\p) #'previous-history)
+  (define-key 'listener '(:modifiers (:alt) :key #\n) #'next-history)
+  (define-key 'listener '(:modifiers (:alt) :key #\p) #'previous-history)
   (define-key 'listener '(:keysym 65363) #'forward-char)
   (define-key 'listener '(:keysym 65361) #'backward-char)
   (define-key 'listener '(:keysym 65364) #'next-history)
@@ -1186,23 +1309,6 @@ in worksheet WRK at location X Y."
   (define-key 'listener '(:key #\Backspace) #'backward-delete-char)
   (define-key 'listener '(:key #\Escape) #'quit)
   (define-key 'listener '(:modifiers (:control) :key #\g) #'quit))
-
-
-(defparameter *user-init-file-name* ".stunrc")
-
-(defvar *initialization-hook* nil)
-
-(defun load-user-init-file ()
-  (load (merge-pathnames (make-pathname :name *user-init-file-name*)
-			 (user-homedir-pathname))))
-
-
-;; (maphash #'(lambda (k v)
-;; 	     (message "~A" (list k v)))
-;; 	 (gethash 'listener *class->keymap*))
-
-;; (gethash '(#\f nil (:control)) 
-;; 	 (gethash 'listener *class->keymap*))
 
 (defun stun ()
   (setf *display* nil)
@@ -1221,17 +1327,17 @@ in worksheet WRK at location X Y."
 
     (message "Adding widgets.")
     (let* ((worksheet (make-instance 'worksheet))
-	   (toolbar (make-instance 'toolbar))
+	   (strip (make-instance 'strip))
 	   (listener (make-instance 'listener :visible-lines 2)))
       (setf (widget panel) worksheet)
       (dotimes (i 4)
 	(let ((box (make-instance 'button
-				  :parent toolbar
+				  :parent strip
 				  :label (nth i 
 					      '("mount" "browse" "properties" "<< back")))))
-	  (adjoin-child toolbar box)))
-      (adjoin-child worksheet toolbar)
-      (adjoin-child toolbar listener)
+	  (adjoin-child strip box)))
+      (adjoin-child worksheet strip)
+      (adjoin-child strip listener)
       
       (xlib:display-finish-output *display*)
       
