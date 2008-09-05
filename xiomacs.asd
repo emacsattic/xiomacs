@@ -2,12 +2,12 @@
 
 ;; ASDF Manual: http://constantly.at/lisp/asdf/
 
-(defpackage :stun-asd)
+(defpackage :xiomacs-asd)
 
-(in-package :stun-asd)
+(in-package :xiomacs-asd)
 
-(asdf:defsystem stun
-  :name "STUN"
+(asdf:defsystem xiomacs
+  :name "XIOMACS"
   :version "0.001"
   :maintainer "David O'Toole"
   :author "David O'Toole"
@@ -16,5 +16,5 @@
   :serial t
   :depends-on (:clx)
   :components ((:file "stun")
-	       (:file "clon"))
+	       (:file "clon")))
 
