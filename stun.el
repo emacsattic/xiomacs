@@ -25,6 +25,7 @@
 ;;; Code:
 
 (require 'cl)
+(require 'rx)
 
 ;;; Running STUN
 
@@ -63,12 +64,10 @@
   (setf *stun-output-buffer* (get-buffer-create "*stun-output*"))
   (setf *stun-process* (start-process "*stun-process*"
 				      nil
-				      *stun-program*))
+				      *stun-program*)))
 
 (defun stun-stop ()
   (delete-process *stun-process*))
-
-;; TODO sentinel
 
 ;;; Sending command strings to STUN
 
@@ -90,9 +89,54 @@
 
 ;;; Determining XINERAMA screen layout					    
 
-(defvar *stun-xdpyinfo-program* "xdpyinfo")
+(defvar *stun-xdpyinfo-command* "DISPLAY=:0.0 xdpyinfo -ext XINERAMA")
 
+(defstruct stun-head height width x y)
 
+(defvar *stun-head-alist* nil)
+
+(defun stun-get-head-layout ()
+  (with-temp-buffer 
+    (shell-command *stun-xdpyinfo-command* t)
+    (labels ((matched-integer (n)
+	       (car (read-from-string (match-string-no-properties n)))))
+      (setf *stun-head-alist* nil)
+      (goto-char (point-min))
+      (while (re-search-forward (rx "head #" 
+				    ;; 1. head number
+				    (group (one-or-more digit))
+				    ":" (one-or-more space)
+				    ;; 2. width
+				    (group (one-or-more digit))
+				    "x" 
+				    ;; 3. height
+				    (group (one-or-more digit))
+				    (one-or-more space) "@" (one-or-more space)
+				    ;; 4. x offset
+				    (group (one-or-more digit))
+				    ","
+				    ;; 5. y offset
+				    (group (one-or-more digit))) 
+				nil :noerror)
+	(setf *stun-head-alist* 
+	      (acons (matched-integer 1)
+		     (make-stun-head :width (matched-integer 2)
+				     :height (matched-integer 3)
+				     :x (matched-integer 4)
+				     :y (matched-integer 5))
+		     *stun-head-alist*)))
+      (when (null *stun-head-alist*)
+	(error "Cannot get XINERAMA head layout data.")))))
+
+(defun stun-head-relative-x (head x)
+  (+ x (stun-head-x head)))
+
+(defun stun-head-relative-y (head y)
+  (+ y (stun-head-y head)))
+
+(defun stun-head-relative-xy (head x y)
+  (values (stun-head-relative-x head x)
+	  (stun-head-relative-y head y)))
 
 (provide 'stun)
 ;;; stun.el ends here
