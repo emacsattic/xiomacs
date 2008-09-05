@@ -87,7 +87,7 @@
       (when (not (= 0 (shell-command script)))
 	(error "Could not complete xprop call.")))))
 
-;;; Determining XINERAMA screen layout					    
+;;; Determining XINERAMA head layout					    
 
 (defvar *stun-xdpyinfo-command* "DISPLAY=:0.0 xdpyinfo -ext XINERAMA")
 
@@ -101,32 +101,47 @@
     (labels ((matched-integer (n)
 	       (car (read-from-string (match-string-no-properties n)))))
       (setf *stun-head-alist* nil)
+      ;; check for XINERAMA
       (goto-char (point-min))
-      (while (re-search-forward (rx "head #" 
-				    ;; 1. head number
-				    (group (one-or-more digit))
-				    ":" (one-or-more space)
-				    ;; 2. width
-				    (group (one-or-more digit))
-				    "x" 
-				    ;; 3. height
-				    (group (one-or-more digit))
-				    (one-or-more space) "@" (one-or-more space)
-				    ;; 4. x offset
-				    (group (one-or-more digit))
-				    ","
-				    ;; 5. y offset
-				    (group (one-or-more digit))) 
-				nil :noerror)
-	(setf *stun-head-alist* 
-	      (acons (matched-integer 1)
-		     (make-stun-head :width (matched-integer 2)
-				     :height (matched-integer 3)
-				     :x (matched-integer 4)
-				     :y (matched-integer 5))
-		     *stun-head-alist*)))
+      (if (search-forward "XINERAMA")
+	  (progn 
+	    (goto-char (point-min))
+	    (while (re-search-forward (rx "head #" 
+					  ;; 1. head number
+					  (group (one-or-more digit))
+					  ":" (one-or-more space)
+					  ;; 2. width
+					  (group (one-or-more digit))
+					  "x" 
+					  ;; 3. height
+					  (group (one-or-more digit))
+					  (one-or-more space) "@" (one-or-more space)
+					  ;; 4. x offset
+					  (group (one-or-more digit))
+					  ","
+					  ;; 5. y offset
+					  (group (one-or-more digit))) 
+				      nil :noerror)
+	      (setf *stun-head-alist* 
+		    (acons (matched-integer 1)
+			   (make-stun-head :width (matched-integer 2)
+					   :height (matched-integer 3)
+					   :x (matched-integer 4)
+					   :y (matched-integer 5))
+			   *stun-head-alist*))))
+	  ;; no xinerama.
+	  (goto-char (point-min))
+	  (when (re-search-forward (rx "dimensions:" (one-or-more space)
+				       (group (one-or-more digit))
+				       "x" (group (one-or-more digit)))
+				   nil :noerror)
+	    (setf *stun-head-alist*
+		  (cons 1 (make-stun-head :width (matched-integer 1)
+					  :height (matched-integer 2)
+					  :x 0 :y 0)))))
+      ;; did we learn anything?
       (when (null *stun-head-alist*)
-	(error "Cannot get XINERAMA head layout data.")))))
+	(error "Cannot get head layout data.")))))
 
 (defun stun-head-relative-x (head x)
   (+ x (stun-head-x head)))
