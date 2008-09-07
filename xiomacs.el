@@ -1,4 +1,4 @@
-;;; stun.el --- running the STUN graphical shell as a subprocess
+;;; xiomacs.el --- xiomacs control library for GNU Emacs
 
 ;; Copyright (C) 2008  David O'Toole
 
@@ -29,15 +29,19 @@
 
 ;;; Running STUN
 
-(defvar *stun-program* "stun")
+(defvar *stun-program* "/home/dto/xiomacs/stun.lisp")
 
-;; (setf *stun-program* "/home/dto/bin/stun")
+(defvar *stun-inferior-lisp-program* "sbcl")
 
 (defvar *stun-output-buffer* nil)
 
 (defvar *stun-process* nil)
 
-(defvar *stun-message-string-handler-function* nil)
+(defun stun-print-message (string)
+  (with-current-buffer *stun-output-buffer*
+    (insert string "\n")))
+
+(defvar *stun-message-string-handler-function* #'stun-print-message)
 
 (defvar *stun-partial-message-string* nil)
 
@@ -59,14 +63,23 @@
 	  ;; not a complete command. just buffer it.
 	  (setf *stun-partial-message-string*
 		(concat *stun-partial-message-string* partial-message))))))
-	     
-(defun stun-start ()
-  (setf *stun-output-buffer* (get-buffer-create "*stun-output*"))
+
+(defun stun-start-sbcl-process ()
   (setf *stun-process* (start-process "*stun-process*"
 				      nil
-				      *stun-program*)))
+				      *stun-inferior-lisp-program*
+				      "--load" *stun-program*
+				      "--eval" "(stun:stun)")))
 
-(defun stun-stop ()
+(defvar *stun-start-lisp-function* #'stun-start-sbcl-process)
+	     
+(defun stun-start ()
+  (interactive)
+  (setf *stun-output-buffer* (get-buffer-create "*stun-output*"))
+  (funcall *stun-start-lisp-function*))
+
+(defun stun-stop () 
+  (interactive)
   (delete-process *stun-process*))
 
 ;;; Sending command strings to STUN

@@ -87,9 +87,6 @@
 
 (defparameter *address-delimiter* #\/)
 
-(defun address-number-of-components (address)
-  (count *message-address-delimiter* address))
-
 (defun find-address-delimiter (address &key (start 0))
   (position *address-delimiter* address :start start))
 
@@ -138,7 +135,8 @@
 ;; The method-component of the address (i.e. the "add" in
 ;; "/notifications/add") is used to select a CLOS method on the
 ;; receiver. The argument-data are passed when the method is invoked
-;; on the receiver. See also :. containers > , which process messages.
+;; on the receiver. See also :. containers > , which process messages
+;; and deliver them to their recipients.
 
 ;; Message string examples:
 
@@ -190,7 +188,9 @@
   ;; a hash table mapping string object names to the objects themselves.
   ((contents :accessor contents :initform nil)
   ;; a list of method names (symbols). these are added to the contents directory.
-   (public-methods :initform *standard-public-methods* :initarg :public-methods :accessor public-methods)))
+   (public-methods :initform *standard-public-methods* 
+		   :initarg :public-methods 
+		   :accessor public-methods)))
 
 (defmethod add-entry ((c container) name entry)
   (setf (gethash (string-upcase name) (contents c))
@@ -1425,31 +1425,33 @@ in worksheet WRK at location X Y."
   (setf *display* nil)
   (initialize-stun)
   (load-user-init-file)
-  (let ((panel (make-instance 'panel)))
+  (
 
-    (setf *system-panel* panel)
 
-    (xlib:display-finish-output *display*)
+  ;; (let ((panel (make-instance 'panel)))
 
-    (auto-resize panel)
-    (xlib:display-finish-output *display*)
+  ;;   (setf *system-panel* panel)
 
-    (let* ((worksheet (make-instance 'worksheet))
-	   (strip (make-instance 'strip))
-	   (listener (make-instance 'listener :visible-lines 2)))
-      (setf (widget panel) worksheet)
-      (dotimes (i 4)
-	(let ((button (make-instance 'button
-				     :parent strip
-				     :label (nth i 
-						 '("mount" "browse" "properties" "<< back")))))
-	  (push-widget strip button)))
-      (adjoin-child worksheet strip)
-      (push-widget strip listener)
+  ;;   (xlib:display-finish-output *display*)
+
+  ;;   (xlib:display-finish-output *display*)
+
+  ;;   (let* ((worksheet (make-instance 'worksheet))
+  ;; 	   (strip (make-instance 'strip))
+  ;; 	   (listener (make-instance 'listener :visible-lines 2)))
+  ;;     (setf (widget panel) worksheet)
+  ;;     (dotimes (i 4)
+  ;; 	(let ((button (make-instance 'button
+  ;; 				     :parent strip
+  ;; 				     :label (nth i 
+  ;; 						 '("mount" "browse" "properties" "<< back")))))
+  ;; 	  (push-widget strip button)))
+  ;;     (adjoin-child worksheet strip)
+  ;;     (push-widget strip listener)
       
-      (xlib:display-finish-output *display*)
+  ;;     (xlib:display-finish-output *display*)
       
-      ;; now get going
-      (run-panels))))
+  ;;     ;; now get going
+  ;;     (run-panels))))
 
 ;;; stun.lisp ends here
