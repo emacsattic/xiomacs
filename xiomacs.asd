@@ -15,6 +15,6 @@
   :description "A desktop hyperenvironment in Emacs Lisp and Common Lisp."
   :serial t
   :depends-on (:clx)
-  :components ((:file "stun")
+  :components ((:file "xiomacs")
 	       (:file "clon")))
 
