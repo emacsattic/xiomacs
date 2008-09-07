@@ -1,10 +1,10 @@
-;;; stun.lisp --- a graphical shell for the X Window System
+;;; xiomacs.lisp --- a graphical shell for the X Window System
 
 ;; Copyright (C) 2006, 2007, 2008  David O'Toole
 ;;
 ;; Author: David O'Toole <dto@gnu.org>
 ;; Keywords: multimedia, tools, lisp, panels, unix
-;; Version: $Id: stun.lisp,v 1.2 2007/10/12 02:35:10 dto Exp $
+;; Version: $Id: xiomacs.lisp,v 1.2 2007/10/12 02:35:10 dto Exp $
 ;;
 ;; This file is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -23,14 +23,14 @@
 
 ;;; Commentary:
 
-;; STUN is a graphical shell for STUMPWM. Like most shells, STUN can
+;; XIOMACS is a graphical shell for STUMPWM. Like most shells, XIOMACS can
 ;; interact with the user, launch programs, and control external
-;; processes. Unlike most shells, STUN is also an alternative
+;; processes. Unlike most shells, XIOMACS is also an alternative
 ;; graphical workspace toolkit for Common Lisp.
 
-;; STUN is designed to run as a subprocess of its client. The client
-;; sends commands (printed lisp data) to STUN via X11 property change
-;; messages. Responses and other events are printed to STUN's
+;; XIOMACS is designed to run as a subprocess of its client. The client
+;; sends commands (printed lisp data) to XIOMACS via X11 property change
+;; messages. Responses and other events are printed to XIOMACS's
 ;; *standard-output* stream.
 
 ;;; Code:
@@ -38,13 +38,13 @@
 (eval-when (:compile-toplevel :load-toplevel :execute) 
   (require :clx))
 
-(defpackage stun
+(defpackage xiomacs
   (:documentation "A graphical shell for the X Window System.")
   (:use :common-lisp)
   (:export widget frame worksheet connection port dataflow listener toolbar
-	   textbox template stun))
+	   textbox template xiomacs))
 
-(in-package :stun)			 
+(in-package :xiomacs)			 
 
 (defun message (control-string &rest args)
   "Print a message to the standard error."
@@ -55,20 +55,24 @@
 
 ;; :. initialization >
 
-(defparameter *user-init-file-name* ".stunrc")
+(defparameter *user-init-file-name* ".xiomacsrc")
 
 (defvar *initialization-hook* nil)
 
 (defun load-user-init-file ()
-  (load (merge-pathnames (make-pathname :name *user-init-file-name*)
-			 (user-homedir-pathname))))
+  (message "Loading user initialization file...")
+  (let ((file (merge-pathnames (make-pathname :name *user-init-file-name*)
+			       (user-homedir-pathname))))
+    (if (probe-file file)
+	(load file)
+	(message "No user init file found."))))
 
 ;;; Addresses
 
 ;; :. addresses >
 
 ;; Addresses are strings of the form "/foo/bar/baz" that identify
-;; resources and actions in a STUN communications session.
+;; resources and actions in a XIOMACS communications session.
 
 ;; The address space is hierarchical like a unix filesystem, and the
 ;; components of an address are separated by `*address-delimiter*',
@@ -314,8 +318,8 @@
 
 ;;; Widgets
 
-;; Widgets are the things that STUN panels display and edit. This is
-;; the base class for interactive graphical elements in STUN.
+;; Widgets are the things that XIOMACS panels display and edit. This is
+;; the base class for interactive graphical elements in XIOMACS.
 
 ;; Widgets are user interface elements that represent objects in a
 ;; problem domain. Widgets may have child widgets, and so on. Widgets
@@ -418,7 +422,7 @@ subcomponents should override this method."))
 (defun hit-widgets-or-parent (widgets parent x y)
   (or (hit-widgets widgets x y) parent))
 
-;;; Panels: X windows full of STUN widgets
+;;; Panels: X windows full of XIOMACS widgets
 
 ;; A panel is an X window for viewing and interacting with widgets.
 ;;
@@ -800,7 +804,7 @@ position."))
     ;; :. xprop >
     (property-notify
      (window atom)
-     (when (eq atom :stun_command)
+     (when (eq atom :xiomacs_command)
        (let ((message-string (xlib:get-property window atom)))
 	 ;; TODO process message
 	 (format t "PROPERTY: ~A" message-string))
@@ -1366,10 +1370,10 @@ in worksheet WRK at location X Y."
 (defmethod hit-test ((s strip) x y)
   (hit-widgets (current-page s) x y))
 
-;;;; Initializing STUN
+;;;; Initializing XIOMACS
 
-(defun initialize-stun ()
-  "Get the stun library ready to go."
+(defun initialize-xiomacs ()
+  "Get the xiomacs library ready to go."
   (initialize-display)
   (initialize-keymap-table)
   (initialize-root-container)
@@ -1421,12 +1425,11 @@ in worksheet WRK at location X Y."
   (define-key 'listener '(:key #\Escape) #'quit)
   (define-key 'listener '(:modifiers (:control) :key #\g) #'quit))
 
-(defun stun ()
+(defun xiomacs ()
   (setf *display* nil)
-  (initialize-stun)
+  (initialize-xiomacs)
   (load-user-init-file)
-  (
-
+  (format t "This is XIOMACS.#\Newline"))
 
   ;; (let ((panel (make-instance 'panel)))
 
@@ -1454,4 +1457,4 @@ in worksheet WRK at location X Y."
   ;;     ;; now get going
   ;;     (run-panels))))
 
-;;; stun.lisp ends here
+;;; xiomacs.lisp ends here
