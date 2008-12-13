@@ -30,6 +30,7 @@
 ;;; Code:
 
 (require 'cl)
+(require 'org)
 
 ;;; Groups
 
@@ -70,8 +71,6 @@
   (setf (impress-group-files group)
 	(impress-get-group-files group)))
 
-
-
 ;;; Paths
 
 (defvar *impress-paths nil)
@@ -88,9 +87,22 @@
   (setf *impress-groups* (make-hash-table :test 'equal)
 	*impress-paths* (make-hash-table :test 'equal)))
 
+(defun impress-publish-org->html (filename destination-dir &optional options)
+  (find-file filename)
+  (org-export-as-html nil :hidden options nil nil destination-dir))
 
+;;; Publishing a group to a path
 
+(defun impress-publish (group path)
+  (let ((files (impress-group-files group))
+	(destination (impress-path-destination-directory path))
+	(options (impress-path-options path))
+	(publisher (impress-path-publisher path)))
+    (dolist (file files)
+      (save-window-excursion
+	(funcall publisher file destination options)))))
 
+;;; well it works...      
 
 (provide 'impress)
 ;;; impress.el ends here
