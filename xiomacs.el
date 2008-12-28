@@ -27,26 +27,28 @@
 (require 'cl)
 (require 'rx)
 
-;;; Running STUN
+;;; Running XIOMACS
 
-(defvar *stun-program* "/home/dto/xiomacs/stun.lisp")
+(defvar *xiomacs-program* "/home/dto/xiomacs/xiomacs.lisp")
 
-(defvar *stun-inferior-lisp-program* "sbcl")
+(defvar *xiomacs-inferior-lisp-program* "sbcl")
 
-(defvar *stun-output-buffer* nil)
+(defvar *xiomacs-output-buffer* nil)
 
-(defvar *stun-process* nil)
+(defvar *xiomacs-error-buffer* nil)
 
-(defun stun-print-message (string)
-  (with-current-buffer *stun-output-buffer*
+(defvar *xiomacs-process* nil)
+
+(defun xiomacs-print-message (string)
+  (with-current-buffer *xiomacs-output-buffer*
     (insert string "\n")))
 
-(defvar *stun-message-string-handler-function* #'stun-print-message)
+(defvar *xiomacs-message-string-handler-function* #'xiomacs-print-message)
 
-(defvar *stun-partial-message-string* nil)
+(defvar *xiomacs-partial-message-string* nil)
 
-(defun stun-process-filter (process string)
-  (let ((partial-message (or *stun-partial-message-string* "")))
+(defun xiomacs-process-filter (process string)
+  (let ((partial-message (or *xiomacs-partial-message-string* "")))
     (setf partial-message (concat partial-message string))
     ;; do we have a complete command?
     (let ((pos (position ?\n partial-message)))
@@ -54,43 +56,44 @@
 	  ;; yes, handle it.
 	  (let ((message (subseq partial-message (1- pos))))
 	    (insert (format "%s -- %s\n" (current-time-string) string))
-	    (funcall *stun-message-string-handler-function* message)
+	    (funcall *xiomacs-message-string-handler-function* message)
 	    ;; any more input? 
-	    (setf *stun-partial-message-string*
+	    (setf *xiomacs-partial-message-string*
 		  (if (> (length partial-message) (1+ pos))
 		      (subseq partial-message (1+ pos))
 		      "")))
 	  ;; not a complete command. just buffer it.
-	  (setf *stun-partial-message-string*
-		(concat *stun-partial-message-string* partial-message))))))
+	  (setf *xiomacs-partial-message-string*
+		(concat *xiomacs-partial-message-string* partial-message))))))
 
-(defun stun-start-sbcl-process ()
-  (setf *stun-process* (start-process "*stun-process*"
+(defun xiomacs-start-sbcl-process ()
+  (setf *xiomacs-process* (start-process "*xiomacs-process*"
 				      nil
-				      *stun-inferior-lisp-program*
-				      "--load" *stun-program*
-				      "--eval" "(stun:stun)")))
+				      *xiomacs-inferior-lisp-program*
+				      "--load" *xiomacs-program*
+				      "--eval" "(xiomacs:xiomacs)")))
 
-(defvar *stun-start-lisp-function* #'stun-start-sbcl-process)
+(defvar *xiomacs-start-lisp-function* #'xiomacs-start-sbcl-process)
 	     
-(defun stun-start ()
+(defun xiomacs-start ()
   (interactive)
-  (setf *stun-output-buffer* (get-buffer-create "*stun-output*"))
-  (funcall *stun-start-lisp-function*))
+  (setf *xiomacs-output-buffer* (get-buffer-create "*xiomacs-output*"))
+  (setf *xiomacs-error-buffer* (get-buffer-create "*xiomacs-error*"))
+  (funcall *xiomacs-start-lisp-function*))
 
-(defun stun-stop () 
+(defun xiomacs-stop () 
   (interactive)
-  (delete-process *stun-process*))
+  (delete-process *xiomacs-process*))
 
-;;; Sending command strings to STUN
+;;; Sending command strings to XIOMACS
 
-(defvar *stun-xprop-program* "xprop"
-  "Name of the stun command.")
+(defvar *xiomacs-xprop-program* "xprop"
+  "Name of the xiomacs command.")
 
-(defvar *stun-default-target* "STUN_COMMAND") ;; :. xprop > 
+(defvar *xiomacs-default-target* "XIOMACS_COMMAND") ;; :. xprop > 
 
-(defun* stun-send (command &optional (target *stun-default-target*))
-  (let* ((arguments (list *stun-xprop-program* 
+(defun* xiomacs-send (command &optional (target *xiomacs-default-target*))
+  (let* ((arguments (list *xiomacs-xprop-program* 
 			  "-root"
 			  "-f" target "8s"
 			  "-set" target
@@ -102,18 +105,18 @@
 
 ;;; Determining XINERAMA head layout					    
 
-(defvar *stun-xdpyinfo-command* "DISPLAY=:0.0 xdpyinfo -ext XINERAMA")
+(defvar *xiomacs-xdpyinfo-command* "DISPLAY=:0.0 xdpyinfo -ext XINERAMA")
 
-(defstruct stun-head height width x y)
+(defstruct xiomacs-head height width x y)
 
-(defvar *stun-head-alist* nil)
+(defvar *xiomacs-head-alist* nil)
 
-(defun stun-get-head-layout ()
+(defun xiomacs-get-head-layout ()
   (with-temp-buffer 
-    (shell-command *stun-xdpyinfo-command* t)
+    (shell-command *xiomacs-xdpyinfo-command* t)
     (labels ((matched-integer (n)
 	       (car (read-from-string (match-string-no-properties n)))))
-      (setf *stun-head-alist* nil)
+      (setf *xiomacs-head-alist* nil)
       ;; check for XINERAMA
       (goto-char (point-min))
       (if (search-forward "XINERAMA")
@@ -135,36 +138,36 @@
 					  ;; 5. y offset
 					  (group (one-or-more digit))) 
 				      nil :noerror)
-	      (setf *stun-head-alist* 
+	      (setf *xiomacs-head-alist* 
 		    (acons (matched-integer 1)
-			   (make-stun-head :width (matched-integer 2)
+			   (make-xiomacs-head :width (matched-integer 2)
 					   :height (matched-integer 3)
 					   :x (matched-integer 4)
 					   :y (matched-integer 5))
-			   *stun-head-alist*))))
+			   *xiomacs-head-alist*))))
 	  ;; no xinerama.
 	  (goto-char (point-min))
 	  (when (re-search-forward (rx "dimensions:" (one-or-more space)
 				       (group (one-or-more digit))
 				       "x" (group (one-or-more digit)))
 				   nil :noerror)
-	    (setf *stun-head-alist*
-		  (cons 1 (make-stun-head :width (matched-integer 1)
+	    (setf *xiomacs-head-alist*
+		  (cons 1 (make-xiomacs-head :width (matched-integer 1)
 					  :height (matched-integer 2)
 					  :x 0 :y 0)))))
       ;; did we learn anything?
-      (when (null *stun-head-alist*)
+      (when (null *xiomacs-head-alist*)
 	(error "Cannot get head layout data.")))))
 
-(defun stun-head-relative-x (head x)
-  (+ x (stun-head-x head)))
+(defun xiomacs-head-relative-x (head x)
+  (+ x (xiomacs-head-x head)))
 
-(defun stun-head-relative-y (head y)
-  (+ y (stun-head-y head)))
+(defun xiomacs-head-relative-y (head y)
+  (+ y (xiomacs-head-y head)))
 
-(defun stun-head-relative-xy (head x y)
-  (values (stun-head-relative-x head x)
-	  (stun-head-relative-y head y)))
+(defun xiomacs-head-relative-xy (head x y)
+  (values (xiomacs-head-relative-x head x)
+	  (xiomacs-head-relative-y head y)))
 
-(provide 'stun)
-;;; stun.el ends here
+(provide 'xiomacs)
+;;; xiomacs.el ends here

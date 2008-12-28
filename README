@@ -1,6 +1,6 @@
 This README is a quick overview of the project and the repository.
 
-Description: STUN is a graphical Lisp power-user desktop environment
+Description: XIOMACS is a graphical Lisp power-user desktop environment
 	     for X11, based on GNU Emacs, Common Lisp, and the Stump
 	     Window Manager.
 
@@ -8,8 +8,7 @@ Requirements: X11 -- http://www.x.org
 	      Common Lisp -- (SBCL recommended) http://www.sbcl.org
 	      GNU Emacs 23.x -- http://www.gnu.org/software/emacs
 	      
-
-Status: Pre-alpha, may or may not work
+Status: PRE-ALPHA, may or may not work!
 
 Files:
 
@@ -18,7 +17,8 @@ COPYING     GNU General Public License text.
 CREDITS     People I would like to thank.
 INSTALL     Installation instructions.
 
-stun.asd    ASDF system definition
+xiomacs.asd    ASDF system definition
+
 stun.lisp   STUN desktop manager and widget toolkit
 stun.el     Emacs client support for STUN desktop manager
 

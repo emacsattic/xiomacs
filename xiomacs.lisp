@@ -23,7 +23,7 @@
 
 ;;; Commentary:
 
-;; XIOMACS is a graphical shell for STUMPWM. Like most shells, XIOMACS can
+;; XIOMACS is a graphical shell for X11. Like most shells, XIOMACS can
 ;; interact with the user, launch programs, and control external
 ;; processes. Unlike most shells, XIOMACS is also an alternative
 ;; graphical workspace toolkit for Common Lisp.
@@ -32,6 +32,8 @@
 ;; sends commands (printed lisp data) to XIOMACS via X11 property change
 ;; messages. Responses and other events are printed to XIOMACS's
 ;; *standard-output* stream.
+
+;; TODO dynamic lisp listener concepts
 
 ;;; Code:
 
