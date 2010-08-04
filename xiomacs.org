@@ -1,4 +1,5 @@
 * xiomacs.org --- hypermedia metaprogramming with org-babel
+
 # Lines beginning with a "#" sign are comments.
 # Special comments begin with "#+" and are used to control Org settings.
 #+title: XIOMACS
@@ -233,7 +234,7 @@ and indexing resources of almost any kind:
 
 #+source: dublin-core-template
 #+begin_src emacs-lisp
-  :Title:
+:Title:
   :Creator:
   :Subject:
   :Description:
@@ -302,55 +303,7 @@ under git control.
 
 ** TODO Exporting workbooks as compressed binaries with all attachments
 
-* Resource data interchange
-
-You can export a workbook's chunk data to a Lisp-based plain text
-format called PAK, for use with other applications (especially those
-written in Emacs Lisp and Common Lisp). One application using these
-".PAK" files for application-specific metadata is [[http://dto.github.com/notebook/xe2-reference.html][the XE2 Common Lisp
-game engine.]]
-
-#+source: pak-file-functions
-#+begin_src emacs-lisp
-(defun chunk-info-to-plist (res)
-  (list :name (chunk-info-name res)
-	:properties (chunk-info-properties res)
-	:file (chunk-info-file res)
-	:data (chunk-info-data res)))
-
-(defun pak-write-sexp-to-file (filename sexp)
-  (with-temp-buffer
-    (insert (format "%S" sexp))
-    (write-file filename)))
-
-(defun pak-read-sexp-from-file (filename)
-  (with-temp-buffer
-    (insert-file-contents filename)
-    (goto-char (point-min))
-    (read (current-buffer))))
-
-(defun pak-write (filename resources)
-  (pak-write-sexp-to-file (mapcar #'chunk-info-to-plist resources) filename))
-
-(defun pak-read (filename)
-  (mapcar #'make-chunk-info (pak-read-sexp-from-file filename)))
-
-(defun pak-read-table (filename) 
-  (let ((table (make-hash-table :test 'equal)))
-    (prog1 table
-      (dolist (res (pak-read filename))
-	(setf (gethash (chunk-info-name res) table)
-	      res)))))
-
-(defun pak-write-table (filename table)
-  (let (resources)
-    (maphash #'(lambda (k v)
-		 (declare (ignore k))
-		 (push v resources))
-	     table)
-    (pak-write filename resources)))
-#+end_src
-
+* 
 * Interface enhancements
 :PROPERTIES:
 :ID: 955c44fc-c271-472c-ac24-1df1edaccad4
@@ -499,7 +452,6 @@ Here is an overview of the output file's organization.
 <<legal-notices>>
 <<prerequisites>>
 <<chunk-info-structure>>
-<<pak-file-functions>>
 <<auto-inserting-properties-templates>>
 <<auto-inserting-chunks>>
 <<visible-chunks>>
@@ -583,19 +535,6 @@ Emacs variables; see [[info:emacs:Specifying%20File%20Variables][info:emacs:Spec
 
 # By default, all chunks in a workbook are exported during tangling. 
 # (for a definition of "tangle", see below.)
-# The following line turns off auto-tangling, so that only 
-# chunks marked with ":tangle yes" are exported.
-
-#+property: tangle no
-
-# Expand <<chunk-name>> references in all chunks during tangling.
-
-#+property: noweb yes
-
-# Chunks of Emacs Lisp meant to be executed interactively in this 
-# workbook should not produce a results chunk.
-
-#+property: results silent
 
 ** Ideas						   :meta:
 *** TODO [#B] org-file-apps
